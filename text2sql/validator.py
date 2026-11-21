@@ -37,12 +37,14 @@ class ValidationResult:
         error_message: str | None = None,
         expanded_stars: bool = False,
         clamped_limit: bool = False,
+        rewrote_dates: bool = False,
     ):
         self.is_valid = is_valid
         self.sanitized_sql = sanitized_sql
         self.error_message = error_message
         self.expanded_stars = expanded_stars
         self.clamped_limit = clamped_limit
+        self.rewrote_dates = rewrote_dates
         self.validated_sql = ValidatedSQL(sanitized_sql) if is_valid and sanitized_sql else None
 
     def __repr__(self) -> str:
@@ -57,7 +59,7 @@ class SQLValidator:
     """Security validator that enforces read-only semantics, table/column allowlists,
 
     function allowlists, sensitive column denylists, safe wildcard expansions,
-    and row LIMIT constraints.
+    relative date rewrites to fixed reference date, and row LIMIT constraints.
     """
 
     FORBIDDEN_EXPRESSIONS: tuple[type[exp.Expression], ...] = (
@@ -75,38 +77,58 @@ class SQLValidator:
         exp.Merge,
     )
 
-    # Strict function allowlist: only known-safe analytical and scalar functions permitted
+    # Strict function allowlist: only known-safe analytical, scalar, and window functions permitted
     ALLOWED_FUNCTIONS: set[str] = {
+        # Aggregates
         "count",
         "sum",
         "avg",
         "min",
         "max",
+        "total",
+        "group_concat",
+        # Math & String
         "round",
-        "coalesce",
         "abs",
         "lower",
         "upper",
         "length",
         "substr",
         "substring",
-        "cast",
+        "trim",
+        "ltrim",
+        "rtrim",
+        "instr",
+        "replace",
+        "coalesce",
+        "nullif",
+        "ifnull",
+        "iif",
+        "if",
+        # Date & Time
         "strftime",
         "date",
         "time",
         "datetime",
-        "nullif",
-        "ifnull",
-        "total",
-        "group_concat",
         "julianday",
-        "instr",
-        "trim",
-        "ltrim",
-        "rtrim",
         "time_to_str",
         "str_to_time",
         "timetostr",
+        # Casting
+        "cast",
+        # Window functions
+        "row_number",
+        "rownumber",
+        "rank",
+        "dense_rank",
+        "denserank",
+        "lag",
+        "lead",
+        "ntile",
+        "first_value",
+        "firstvalue",
+        "last_value",
+        "lastvalue",
     }
 
     # Forbidden system / table-valued tables
@@ -123,6 +145,7 @@ class SQLValidator:
         allowed_columns: dict[str, set[str]],
         denylist_columns: list[str] | None = None,
         max_query_limit: int = 1000,
+        reference_date: str = "2024-12-31",
         dialect: str = "sqlite",
     ):
         self.allowed_tables = {t.lower() for t in allowed_tables}
@@ -132,6 +155,7 @@ class SQLValidator:
         }
         self.denylist = [c.lower().strip() for c in (denylist_columns or [])]
         self.max_query_limit = max_query_limit
+        self.reference_date = reference_date
         self.dialect = dialect
 
         # Identify tables that contain denylisted columns
@@ -144,7 +168,7 @@ class SQLValidator:
     def is_denylisted(self, col_name: str) -> bool:
         """Check if column name matches any denylisted sensitive attribute."""
         col_clean = col_name.lower().strip().strip("`\"'[]")
-        # Handle possible table.col notation
+        # Handle possible table.col notation (e.g. patients.phone)
         if "." in col_clean:
             col_clean = col_clean.split(".")[-1].strip("`\"'[]")
         return any(col_clean == blocked for blocked in self.denylist)
@@ -228,7 +252,11 @@ class SQLValidator:
                             ),
                         )
 
-        # 5. Function allowlist enforcement: reject load_extension, zeroblob, randomblob, etc.
+        # 5. Date rewrites: replace 'now', CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP
+        # with fixed reference date (2024-12-31) so queries never evaluate against the live wall-clock
+        ast, rewrote_dates = self._rewrite_relative_dates(ast)
+
+        # 6. Function allowlist enforcement: reject load_extension, zeroblob, randomblob, etc.
         for func_node in ast.find_all(exp.Func):
             # Skip sqlglot internal date/timestamp transpile helper nodes
             if isinstance(func_node, (exp.TsOrDsToTimestamp, exp.TsOrDsToDate)):
@@ -278,7 +306,10 @@ class SQLValidator:
         for tbl_node in ast.find_all(exp.Table):
             tbl_name = tbl_node.name.lower()
             if not tbl_name:
-                continue
+                return ValidationResult(
+                    is_valid=False,
+                    error_message="Encountered invalid table expression without identifier.",
+                )
 
             # Check forbidden table prefixes (sqlite_*, pragma_*, json_*, etc.)
             for prefix in self.FORBIDDEN_TABLE_PREFIXES:
@@ -350,7 +381,7 @@ class SQLValidator:
         except SecurityValidationError as sve:
             return ValidationResult(is_valid=False, error_message=str(sve))
 
-        # 10. LIMIT enforcement: add default or clamp excessive LIMIT
+        # 11. LIMIT enforcement: add default or clamp excessive LIMIT
         clamped_limit = False
         limit_node = ast.args.get("limit")
         if limit_node is None:
@@ -374,7 +405,34 @@ class SQLValidator:
             sanitized_sql=sanitized_sql,
             expanded_stars=expanded_stars,
             clamped_limit=clamped_limit,
+            rewrote_dates=rewrote_dates,
         )
+
+    def _rewrite_relative_dates(self, ast: exp.Expression) -> tuple[exp.Expression, bool]:
+        """Rewrite 'now', CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP to fixed reference date."""
+        rewrote = False
+        ref_date = self.reference_date
+        ref_timestamp = f"{ref_date} 23:59:59"
+
+        for node in list(ast.walk()):
+            if isinstance(node, exp.CurrentDate):
+                node.replace(exp.Literal.string(ref_date))
+                rewrote = True
+            elif isinstance(node, exp.CurrentTimestamp):
+                node.replace(exp.Literal.string(ref_timestamp))
+                rewrote = True
+            elif isinstance(node, exp.CurrentTime):
+                node.replace(exp.Literal.string("23:59:59"))
+                rewrote = True
+            elif isinstance(node, exp.Literal) and str(node.this).lower() == "now":
+                parent = node.parent
+                if parent and isinstance(parent, exp.Anonymous) and parent.name.lower() in ("datetime", "julianday", "strftime"):
+                    node.replace(exp.Literal.string(ref_timestamp))
+                else:
+                    node.replace(exp.Literal.string(ref_date))
+                rewrote = True
+
+        return ast, rewrote
 
     def _handle_star_selections(
         self,
@@ -421,6 +479,10 @@ class SQLValidator:
                                 "Wildcard 'SELECT *' is blocked because queried tables contain sensitive columns. "
                                 "Explicitly specify the allowed columns."
                             )
+                        if not local_tables:
+                            raise SecurityValidationError(
+                                "Wildcard 'SELECT *' cannot be expanded because target table could not be resolved."
+                            )
                         # Expand star to allowed columns of all local tables
                         for tbl in sorted(local_tables):
                             if tbl in self.allowed_columns:
@@ -441,15 +503,18 @@ class SQLValidator:
                     alias = expr.table.lower() if expr.table else ""
                     real_tbl = local_aliases.get(alias, table_aliases.get(alias))
 
-                    if real_tbl in ("patients",) or (
-                        real_tbl and any(self.is_denylisted(d) for d in self.denylist)
-                    ):
+                    if not real_tbl:
+                        raise SecurityValidationError(
+                            f"Unable to resolve wildcard '{alias}.*' to an authorized table schema."
+                        )
+
+                    if real_tbl in ("patients",) or any(self.is_denylisted(d) for d in self.denylist):
                         if reject_stars_on_sensitive or not expand_stars:
                             raise SecurityValidationError(
                                 f"Wildcard '{alias}.*' is blocked because table '{real_tbl}' contains "
                                 f"sensitive columns. Explicitly specify the allowed columns."
                             )
-                        if real_tbl and real_tbl in self.allowed_columns:
+                        if real_tbl in self.allowed_columns:
                             for col_name in sorted(self.allowed_columns[real_tbl]):
                                 new_select_expressions.append(
                                     exp.Column(

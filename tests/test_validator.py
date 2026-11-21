@@ -482,3 +482,94 @@ def test_validation_result_repr(validator):
     assert "ValidationResult" in repr(res)
     assert "ValidatedSQL" in repr(res.validated_sql)
     assert str(res.validated_sql) == res.sanitized_sql
+
+
+# --- Date Rewriting Tests ('now', CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP) ---
+
+
+def test_rewrite_date_now(validator):
+    """date('now') must rewrite to the fixed reference date 2024-12-31."""
+    sql = "SELECT date('now')"
+    res = validator.validate(sql)
+    assert res.is_valid
+    assert "2024-12-31" in res.sanitized_sql
+    assert "'now'" not in res.sanitized_sql.lower()
+
+
+def test_rewrite_julianday_now(validator):
+    """julianday('now') must rewrite to fixed reference date/timestamp."""
+    sql = "SELECT julianday('now')"
+    res = validator.validate(sql)
+    assert res.is_valid
+    assert "2024-12-31" in res.sanitized_sql
+    assert "'now'" not in res.sanitized_sql.lower()
+
+
+def test_rewrite_datetime_now_localtime(validator):
+    """datetime('now', 'localtime') must rewrite 'now' to fixed reference date."""
+    sql = "SELECT datetime('now', 'localtime')"
+    res = validator.validate(sql)
+    assert res.is_valid
+    assert "2024-12-31" in res.sanitized_sql
+    assert "'now'" not in res.sanitized_sql.lower()
+
+
+def test_rewrite_current_date_and_timestamp(validator):
+    """CURRENT_DATE and CURRENT_TIMESTAMP must rewrite to fixed reference strings."""
+    sql = "SELECT CURRENT_DATE, CURRENT_TIMESTAMP"
+    res = validator.validate(sql)
+    assert res.is_valid
+    assert "2024-12-31" in res.sanitized_sql
+    assert "CURRENT_DATE" not in res.sanitized_sql.upper()
+
+
+# --- Window Functions & Safe Helpers Tests ---
+
+
+def test_allowed_window_functions(validator):
+    """Confirm window functions pass validation cleanly."""
+    sql = (
+        "SELECT "
+        "  id, doctor_id, duration_minutes, "
+        "  ROW_NUMBER() OVER (PARTITION BY doctor_id ORDER BY scheduled_at) AS row_num, "
+        "  RANK() OVER (PARTITION BY doctor_id ORDER BY duration_minutes DESC) AS rnk, "
+        "  DENSE_RANK() OVER (PARTITION BY doctor_id ORDER BY duration_minutes DESC) AS dense_rnk, "
+        "  LAG(duration_minutes, 1) OVER (PARTITION BY doctor_id ORDER BY scheduled_at) AS prev_dur, "
+        "  LEAD(duration_minutes, 1) OVER (PARTITION BY doctor_id ORDER BY scheduled_at) AS next_dur, "
+        "  NTILE(4) OVER (ORDER BY duration_minutes) AS quartile, "
+        "  FIRST_VALUE(duration_minutes) OVER (PARTITION BY doctor_id ORDER BY scheduled_at) AS first_dur, "
+        "  LAST_VALUE(duration_minutes) OVER (PARTITION BY doctor_id ORDER BY scheduled_at) AS last_dur, "
+        "  IIF(status = 'completed', 1, 0) AS is_done, "
+        "  REPLACE(status, 'completed', 'DONE') AS status_rep "
+        "FROM appointments"
+    )
+    res = validator.validate(sql)
+    assert res.is_valid
+
+
+def test_disallowed_functions_still_rejected(validator):
+    """Ensure zeroblob, randomblob, and load_extension remain rejected."""
+    for fn in ["zeroblob(16)", "randomblob(16)", "load_extension('lib')"]:
+        sql = f"SELECT {fn}"
+        res = validator.validate(sql)
+        assert not res.is_valid
+        assert "unauthorized function" in res.error_message.lower()
+
+
+# --- Defensive Branch Fail-Closed Tests ---
+
+
+def test_unresolvable_wildcard_alias_fails_closed(validator):
+    """Wildcard with unknown alias like bad.* must fail closed and reject."""
+    sql = "SELECT bad.* FROM doctors d"
+    res = validator.validate(sql)
+    assert not res.is_valid
+    assert "unable to resolve wildcard 'bad.*'" in res.error_message.lower()
+
+
+def test_empty_table_expression_fails_closed(validator):
+    """Encountering an empty/unnamed table node must fail closed."""
+    # Test validator is_denylisted on dotted notation directly
+    assert validator.is_denylisted("patients.phone")
+    assert validator.is_denylisted("[patients].[email]")
+    assert not validator.is_denylisted("patients.id")
