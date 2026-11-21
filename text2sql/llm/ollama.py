@@ -6,7 +6,12 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel
 
-from text2sql.llm.base import BaseLLMProvider, LLMError
+from text2sql.llm.base import (
+    BaseLLMProvider,
+    LLMError,
+    ProviderUnavailableError,
+    StructuredGenerationError,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -37,10 +42,20 @@ class OllamaProvider(BaseLLMProvider):
                 resp.raise_for_status()
                 data = resp.json()
                 return data.get("response", "")
-        except httpx.ConnectError as ce:
-            raise LLMError(
+        except (httpx.ConnectError, httpx.ConnectTimeout) as ce:
+            raise ProviderUnavailableError(
                 f"Could not connect to Ollama at {self.base_url}. Is Ollama running?"
             ) from ce
+        except httpx.TimeoutException as te:
+            raise ProviderUnavailableError(
+                f"Ollama request timed out after {self.timeout}s: {te}"
+            ) from te
+        except httpx.HTTPStatusError as se:
+            if se.response.status_code in (401, 403, 404, 502, 503, 504):
+                raise ProviderUnavailableError(
+                    f"Ollama HTTP error ({se.response.status_code}) at {self.base_url}: {se}"
+                ) from se
+            raise LLMError(f"Ollama HTTP error: {se}") from se
         except Exception as e:
             raise LLMError(f"Ollama generation failed: {e}") from e
 
@@ -70,11 +85,27 @@ class OllamaProvider(BaseLLMProvider):
                 resp.raise_for_status()
                 data = resp.json()
                 raw_response = data.get("response", "{}")
-                parsed_json = json.loads(raw_response)
-                return response_model.model_validate(parsed_json)
-        except httpx.ConnectError as ce:
-            raise LLMError(
+        except (httpx.ConnectError, httpx.ConnectTimeout) as ce:
+            raise ProviderUnavailableError(
                 f"Could not connect to Ollama at {self.base_url}. Is Ollama running?"
             ) from ce
+        except httpx.TimeoutException as te:
+            raise ProviderUnavailableError(
+                f"Ollama request timed out after {self.timeout}s: {te}"
+            ) from te
+        except httpx.HTTPStatusError as se:
+            if se.response.status_code in (401, 403, 404, 502, 503, 504):
+                raise ProviderUnavailableError(
+                    f"Ollama HTTP error ({se.response.status_code}) at {self.base_url}: {se}"
+                ) from se
+            raise LLMError(f"Ollama HTTP error: {se}") from se
         except Exception as e:
-            raise LLMError(f"Ollama structured generation failed: {e}") from e
+            raise LLMError(f"Ollama request failed: {e}") from e
+
+        try:
+            parsed_json = json.loads(raw_response)
+            return response_model.model_validate(parsed_json)
+        except Exception as e:
+            raise StructuredGenerationError(
+                f"Failed to parse Ollama response into JSON schema: {e}. Raw response: {raw_response[:200]}"
+            ) from e

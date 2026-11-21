@@ -9,7 +9,13 @@ from google.genai import types
 from google.genai.errors import APIError
 from pydantic import BaseModel
 
-from text2sql.llm.base import BaseLLMProvider, LLMError, LLMRateLimitError
+from text2sql.llm.base import (
+    BaseLLMProvider,
+    LLMError,
+    LLMRateLimitError,
+    ProviderUnavailableError,
+    StructuredGenerationError,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -19,21 +25,24 @@ class GeminiProvider(BaseLLMProvider):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         model: str = "gemini-2.5-flash",
         max_retries: int = 3,
         initial_backoff_seconds: float = 1.0,
     ):
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY must be provided for GeminiProvider.")
-        self.api_key = api_key
+        self.api_key = api_key or ""
         self.model = model
         self.max_retries = max_retries
         self.initial_backoff = initial_backoff_seconds
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=self.api_key) if self.api_key else None
 
     def _execute_with_backoff(self, fn, *args, **kwargs):
         """Execute callable with exponential backoff on transient rate limits (429)."""
+        if not self.api_key or self.client is None:
+            raise ProviderUnavailableError(
+                "GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your environment or .env file."
+            )
+
         backoff = self.initial_backoff
         for attempt in range(self.max_retries + 1):
             try:
@@ -45,15 +54,24 @@ class GeminiProvider(BaseLLMProvider):
                         time.sleep(backoff)
                         backoff *= 2.0
                         continue
-                    raise LLMRateLimitError(f"Gemini rate limit exceeded after {self.max_retries} retries: {ae}") from ae
+                    raise LLMRateLimitError(
+                        f"Gemini rate limit exceeded after {self.max_retries} retries: {ae}"
+                    ) from ae
+                if code in (401, 403, 404, 502, 503, 504):
+                    raise ProviderUnavailableError(
+                        f"Gemini API authentication/availability error ({code}): {ae}"
+                    ) from ae
                 raise LLMError(f"Gemini API error ({code}): {ae}") from ae
             except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e).upper():
+                err_str = str(e).upper()
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     if attempt < self.max_retries:
                         time.sleep(backoff)
                         backoff *= 2.0
                         continue
                     raise LLMRateLimitError(f"Gemini rate limit exceeded: {e}") from e
+                if any(x in err_str for x in ["CONNECT", "TIMEOUT", "UNREACHABLE", "NETWORK", "API_KEY"]):
+                    raise ProviderUnavailableError(f"Gemini connection/network error: {e}") from e
                 raise LLMError(f"Gemini call failed: {e}") from e
 
     def generate(self, prompt: str, system_prompt: str | None = None) -> str:
@@ -92,7 +110,12 @@ class GeminiProvider(BaseLLMProvider):
                 config=config,
             )
             raw_text = resp.text or "{}"
-            parsed = json.loads(raw_text)
-            return response_model.model_validate(parsed)
+            try:
+                parsed = json.loads(raw_text)
+                return response_model.model_validate(parsed)
+            except Exception as e:
+                raise StructuredGenerationError(
+                    f"Failed to parse Gemini response into JSON schema: {e}. Raw response: {raw_text[:200]}"
+                ) from e
 
         return self._execute_with_backoff(_call)

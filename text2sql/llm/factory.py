@@ -13,10 +13,6 @@ def get_llm_provider(custom_settings: Settings | None = None) -> BaseLLMProvider
     provider_name = cfg.llm_provider.lower().strip()
 
     if provider_name == "gemini":
-        if not cfg.gemini_api_key:
-            raise ValueError(
-                "GEMINI_API_KEY is not set. Please export GEMINI_API_KEY or configure .env."
-            )
         return GeminiProvider(api_key=cfg.gemini_api_key, model=cfg.gemini_model)
 
     elif provider_name == "ollama":

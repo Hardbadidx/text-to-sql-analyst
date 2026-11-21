@@ -20,6 +20,21 @@ class LLMRateLimitError(LLMError):
     pass
 
 
+class ProviderUnavailableError(LLMError):
+    """Raised when an LLM provider cannot be reached due to connection, authentication, or timeout issues.
+
+    This error must fail fast without SQL self-correction retries.
+    """
+
+    pass
+
+
+class StructuredGenerationError(LLMError):
+    """Raised when the model's output cannot be parsed into the expected Pydantic schema."""
+
+    pass
+
+
 class BaseLLMProvider(ABC):
     """Universal interface for local and API-based LLM providers."""
 
