@@ -1,6 +1,7 @@
 """Google Gemini provider implementation using the official Google GenAI SDK with retry/backoff."""
 
 import json
+import re
 import time
 from typing import TypeVar
 
@@ -26,18 +27,22 @@ class GeminiProvider(BaseLLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.5-flash-lite",
         max_retries: int = 3,
         initial_backoff_seconds: float = 1.0,
     ):
         self.api_key = api_key or ""
-        self.model = model
+        raw_model = (model or "gemini-3.5-flash-lite").strip()
+        normalized = re.sub(r"\s+", "-", raw_model).lower()
+        if normalized.startswith("models/"):
+            normalized = normalized[len("models/"):]
+        self.model = normalized
         self.max_retries = max_retries
         self.initial_backoff = initial_backoff_seconds
         self.client = genai.Client(api_key=self.api_key) if self.api_key else None
 
     def _execute_with_backoff(self, fn, *args, **kwargs):
-        """Execute callable with exponential backoff on transient rate limits (429)."""
+        """Execute callable with exponential backoff on transient rate limits (429) or spikes (503)."""
         if not self.api_key or self.client is None:
             raise ProviderUnavailableError(
                 "GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your environment or .env file."
@@ -49,15 +54,20 @@ class GeminiProvider(BaseLLMProvider):
                 return fn(*args, **kwargs)
             except APIError as ae:
                 code = getattr(ae, "code", None)
-                if code == 429 or "RESOURCE_EXHAUSTED" in str(ae).upper():
+                msg_upper = str(ae).upper()
+                if (
+                    code in (429, 503)
+                    or "RESOURCE_EXHAUSTED" in msg_upper
+                    or "UNAVAILABLE" in msg_upper
+                ):
                     if attempt < self.max_retries:
                         time.sleep(backoff)
                         backoff *= 2.0
                         continue
                     raise LLMRateLimitError(
-                        f"Gemini rate limit exceeded after {self.max_retries} retries: {ae}"
+                        f"Gemini capacity or rate limit exceeded after {self.max_retries} retries: {ae}"
                     ) from ae
-                if code in (401, 403, 404, 502, 503, 504):
+                if code in (401, 403, 404, 502, 504):
                     raise ProviderUnavailableError(
                         f"Gemini API authentication/availability error ({code}): {ae}"
                     ) from ae

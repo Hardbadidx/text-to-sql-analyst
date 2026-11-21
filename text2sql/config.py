@@ -1,9 +1,14 @@
 """Application configuration and environment settings."""
 
+import json
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+# Hard-coded non-negotiable minimum denylist for sensitive patient columns
+MANDATORY_DENYLIST: tuple[str, ...] = ("phone", "email", "address", "ssn")
 
 
 class Settings(BaseSettings):
@@ -22,7 +27,7 @@ class Settings(BaseSettings):
     )
 
     # Security & Safety
-    denylist_columns: list[str] = Field(
+    denylist_columns: Annotated[list[str], NoDecode] = Field(
         default=["phone", "email", "address", "ssn", "social_security"],
         description="Column names to exclude completely from LLM context and reject during validation.",
     )
@@ -66,6 +71,32 @@ class Settings(BaseSettings):
         default=Path("logs/queries.jsonl"),
         description="Path to JSONL audit log file.",
     )
+
+    @field_validator("denylist_columns", mode="before")
+    @classmethod
+    def parse_and_enforce_denylist(cls, v: object) -> list[str]:
+        """Parse comma-separated strings, JSON arrays, or lists, and enforce mandatory denylist."""
+        configured: list[str] = []
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    parsed = json.loads(v_str)
+                    if isinstance(parsed, list):
+                        configured = [str(x).strip().lower() for x in parsed if str(x).strip()]
+                except Exception:
+                    configured = [x.strip().lower() for x in v_str.split(",") if x.strip()]
+            elif v_str:
+                configured = [x.strip().lower() for x in v_str.split(",") if x.strip()]
+        elif isinstance(v, (list, tuple, set)):
+            configured = [str(x).strip().lower() for x in v if str(x).strip()]
+
+        # Rule (b): env value adds to hard-coded minimum denylist, never replaces or empties it
+        combined = list(MANDATORY_DENYLIST)
+        for col in configured:
+            if col not in combined:
+                combined.append(col)
+        return combined
 
 
 # Singleton instance

@@ -17,3 +17,7 @@ for name, sql in checks.items():
 print("status %:", con.execute("SELECT status, ROUND(100.0*COUNT(*)/(SELECT COUNT(*) FROM appointments),1) FROM appointments GROUP BY status").fetchall())
 print("date range:", con.execute("SELECT MIN(scheduled_at), MAX(scheduled_at) FROM appointments").fetchone())
 print("patients cols:", [r[1] for r in con.execute("PRAGMA table_info(patients)")])
+
+print("Q1 completed:", con.execute("SELECT COUNT(*) FROM appointments WHERE status='completed'").fetchone())
+print("Q3 completed 2024:", con.execute("SELECT COUNT(*) FROM appointments WHERE status='completed' AND strftime('%Y',scheduled_at)='2024'").fetchone())
+print("Q2 invoiced by specialty:", con.execute("SELECT d.specialty, ROUND(SUM(i.amount),2) FROM invoices i JOIN appointments a ON a.id=i.appointment_id JOIN doctors d ON d.id=a.doctor_id GROUP BY d.specialty ORDER BY 2 DESC").fetchall())
