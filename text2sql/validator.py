@@ -359,6 +359,10 @@ class SQLValidator:
             table_aliases[tbl_name] = tbl_name
 
         # 8. Check explicit column references for denylist violations
+        projected_aliases: set[str] = {
+            a.alias.lower().strip("`\"'[]") for a in ast.find_all(exp.Alias) if a.alias
+        }
+
         for col_node in ast.find_all(exp.Column):
             col_name = col_node.name.lower()
             if col_name == "*":
@@ -374,6 +378,10 @@ class SQLValidator:
                         f"Access to sensitive denylisted column '{clean_col}' is strictly forbidden."
                     ),
                 )
+
+            # Skip checking against base table columns if column is a projected alias (e.g. in ORDER BY, HAVING, or CTE)
+            if clean_col in projected_aliases:
+                continue
 
             # Check column allowlist if table can be determined
             tbl_ref = col_node.table.lower() if col_node.table else None
