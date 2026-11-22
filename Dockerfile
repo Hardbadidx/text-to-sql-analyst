@@ -14,14 +14,15 @@ WORKDIR /app
 # Create non-root application user
 RUN useradd -m -u 1000 appuser
 
-# Install dependencies
-COPY pyproject.toml .
+# Install dependencies and project package
+# (hatchling build backend requires pyproject.toml, README.md, and text2sql/ package sources)
+COPY --chown=appuser:appuser pyproject.toml README.md ./
+COPY --chown=appuser:appuser text2sql/ text2sql/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
 # Copy application modules, verified demo cache, database, and eval benchmark results
 COPY --chown=appuser:appuser app/ app/
-COPY --chown=appuser:appuser text2sql/ text2sql/
 COPY --chown=appuser:appuser scripts/ scripts/
 COPY --chown=appuser:appuser clinic.db clinic.db
 COPY --chown=appuser:appuser data_checksum.txt data_checksum.txt
@@ -37,5 +38,5 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')" || exit 1
 
-# Launch Streamlit app
-ENTRYPOINT ["streamlit", "run", "app/streamlit_app.py"]
+# Launch Streamlit app on 0.0.0.0:8501
+ENTRYPOINT ["streamlit", "run", "app/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
