@@ -116,8 +116,10 @@ class SQLValidator:
         "time_to_str",
         "str_to_time",
         "timetostr",
-        # Casting
+        # Casting & Collation & Subqueries
         "cast",
+        "collate",
+        "exists",
         # Window functions
         "row_number",
         "rownumber",
@@ -142,7 +144,7 @@ class SQLValidator:
     )
 
     # AST nodes that inherit from exp.Func in sqlglot but represent logical operators,
-    # predicates, conditional control flow, or internal transpilation helpers
+    # conditional control flow, or internal transpilation helpers
     EXCLUDED_FUNC_TYPES: tuple[type[exp.Expression], ...] = (
         exp.Connector,
         exp.And,
@@ -150,9 +152,6 @@ class SQLValidator:
         exp.Not,
         exp.Case,
         exp.If,
-        exp.Binary,
-        exp.Unary,
-        exp.Predicate,
         exp.Concat,
         exp.TsOrDsToTimestamp,
         exp.TsOrDsToDate,

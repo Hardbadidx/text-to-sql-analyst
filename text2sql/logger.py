@@ -21,6 +21,7 @@ class QueryAuditLog(BaseModel):
     prompt_chars: int = 0
     prompt_tokens_est: int = 0
     error_message: str | None = None
+    debug_error: str | None = None
 
 
 class AuditLogger:
@@ -41,6 +42,7 @@ class AuditLogger:
         prompt_chars: int = 0,
         prompt_tokens_est: int = 0,
         error_message: str | None = None,
+        debug_error: str | None = None,
     ) -> QueryAuditLog:
         """Write an audit record to JSONL, sanitizing any denylisted patterns."""
         # Sanitize question to prevent secret leakage
@@ -57,6 +59,7 @@ class AuditLogger:
             prompt_chars=prompt_chars,
             prompt_tokens_est=prompt_tokens_est,
             error_message=error_message,
+            debug_error=debug_error,
         )
 
         with open(self.log_path, "a", encoding="utf-8") as f:

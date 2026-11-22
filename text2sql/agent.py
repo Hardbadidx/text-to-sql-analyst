@@ -74,6 +74,7 @@ class AgentResult(BaseModel):
     prompt_chars: int = 0
     prompt_tokens_est: int = 0
     error_message: str | None = None
+    debug_error: str | None = None
     attempts_history: list[AttemptDetail] = Field(default_factory=list)
 
 
@@ -125,6 +126,27 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         self.audit_logger = AuditLogger(log_path=self.settings.log_file)
 
     @staticmethod
+    def _format_human_readable_provider_error(err_str: str) -> str:
+        """Format a technical or raw LLM provider error into a concise, human-readable UI message."""
+        err_lower = err_str.lower()
+        if any(p in err_lower for p in ("daily", "perday", "per_day")):
+            return "Daily API quota limit reached. Please verify quota or try again tomorrow."
+        if any(p in err_lower for p in ("retry delay exceeds 60s", "quota exceeded")):
+            return "API rate limit or quota exceeded with extended delay. Service is currently unavailable."
+        if any(p in err_lower for p in ("rate limit", "resource_exhausted", "429")):
+            return "Rate limit exceeded. Provider service is temporarily busy; please retry shortly."
+        if any(p in err_lower for p in ("timeout", "timed out", "deadline_exceeded")):
+            return "Provider request timed out. The model took too long to respond."
+        if any(p in err_lower for p in ("api_key", "401", "403", "authentication")):
+            return "Provider authentication failed. Please verify API key configuration."
+        if any(p in err_lower for p in ("400", "404", "not found", "invalid_argument", "model configuration error")):
+            return "Configured model not found or invalid model configuration. Please verify model settings."
+        if any(p in err_lower for p in ("connect", "unreachable", "network", "ssl")):
+            return "Unable to connect to the provider endpoint. Please check your network connection."
+        first_line = err_str.strip().split("\n")[0]
+        return f"Provider error: {first_line[:120]}"
+
+    @staticmethod
     def _check_deterministic_refusal(question: str) -> str | None:
         """Deterministic safety pre-check executed BEFORE calling the LLM provider.
 
@@ -151,13 +173,13 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             if re.search(pat, q_lower):
                 return "Request refused: Prompt injection, system override, or destructive command detected."
 
-        # 2. Write / DDL operations
+        # 2. Write / DDL / Destructive operations
         write_patterns = [
-            r"^\s*(delete|drop|insert|update|alter|truncate|create|attach|detach|grant|revoke|vacuum)\b",
-            r"\b(delete\s+(all|the|from|every)|drop\s+(table|database|schema)|insert\s+into|update\s+\w+\s+set|truncate\s+table)\b",
+            r"^\s*(delete|drop|insert|update|alter|truncate|create|attach|detach|grant|revoke|vacuum|wipe|erase|clear|purge|remove)\b",
+            r"\b(wipe|erase|clear|purge|remove|delete|truncate)\s+(all|the|every|from|our|entire)\b",
+            r"\b(delete|drop|insert|update|alter|truncate|wipe|erase|clear|purge)\s+(table|database|schema|records|rows|data)\b",
             r"\b(add|insert|create)\s+(a\s+)?(new\s+)?(patient|doctor|appointment|treatment|invoice|payment|record|row)\b",
             r"\b(modify|change|update)\s+(the\s+)?(patient|doctor|appointment|treatment|invoice|payment|status|duration|reason)\b",
-            r"\b(remove|delete)\s+(all\s+)?(appointments?|patients?|doctors?|invoices?|treatments?)\b",
         ]
         for pat in write_patterns:
             if re.search(pat, q_lower):
@@ -284,14 +306,15 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             except ProviderUnavailableError as pue:
                 # LLM connection/auth/timeout/invalid-model -> FAIL FAST, NO RETRIES
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-                err_msg = str(pue)
+                raw_err = str(pue)
+                human_err = self._format_human_readable_provider_error(raw_err)
                 attempts_history.append(
                     AttemptDetail(
                         attempt=attempt,
                         sql=None,
                         validator_valid=None,
                         validator_error=None,
-                        db_error=err_msg,
+                        db_error=human_err,
                     )
                 )
                 self.audit_logger.log(
@@ -303,14 +326,15 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     row_count=0,
                     prompt_chars=prompt_chars,
                     prompt_tokens_est=prompt_tokens_est,
-                    error_message=err_msg,
+                    error_message=human_err,
+                    debug_error=raw_err,
                 )
                 return AgentResult(
                     question=question,
                     sql=None,
                     df=None,
                     row_count=0,
-                    explanation=f"LLM provider is currently unavailable: {err_msg}",
+                    explanation=f"LLM provider is currently unavailable: {human_err}",
                     chart_type="table-only",
                     chart_figure=None,
                     attempts=1,
@@ -318,7 +342,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     latency_ms=round(elapsed_ms, 2),
                     prompt_chars=prompt_chars,
                     prompt_tokens_est=prompt_tokens_est,
-                    error_message=err_msg,
+                    error_message=human_err,
+                    debug_error=raw_err,
                     attempts_history=attempts_history,
                 )
             except StructuredGenerationError as sge:
@@ -359,14 +384,15 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 )
                 if is_provider_issue:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-                    err_msg = str(e)
+                    raw_err = str(e)
+                    human_err = self._format_human_readable_provider_error(raw_err)
                     attempts_history.append(
                         AttemptDetail(
                             attempt=attempt,
                             sql=None,
                             validator_valid=None,
                             validator_error=None,
-                            db_error=err_msg,
+                            db_error=human_err,
                         )
                     )
                     self.audit_logger.log(
@@ -378,14 +404,15 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                         row_count=0,
                         prompt_chars=prompt_chars,
                         prompt_tokens_est=prompt_tokens_est,
-                        error_message=err_msg,
+                        error_message=human_err,
+                        debug_error=raw_err,
                     )
                     return AgentResult(
                         question=question,
                         sql=None,
                         df=None,
                         row_count=0,
-                        explanation=f"LLM provider is currently unavailable: {err_msg}",
+                        explanation=f"LLM provider is currently unavailable: {human_err}",
                         chart_type="table-only",
                         chart_figure=None,
                         attempts=1,
@@ -393,7 +420,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                         latency_ms=round(elapsed_ms, 2),
                         prompt_chars=prompt_chars,
                         prompt_tokens_est=prompt_tokens_est,
-                        error_message=err_msg,
+                        error_message=human_err,
+                        debug_error=raw_err,
                         attempts_history=attempts_history,
                     )
 

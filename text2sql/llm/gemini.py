@@ -83,6 +83,25 @@ class GeminiProvider(BaseLLMProvider):
                     or "RESOURCE_EXHAUSTED" in msg_upper
                     or "UNAVAILABLE" in msg_upper
                 ):
+                    # Fail fast with no retries if quota is per-day or RetryInfo delay > 60s
+                    is_per_day = any(p in msg_upper for p in ("PERDAY", "PER_DAY", "PER DAY", "DAILY"))
+                    delay_match = re.search(
+                        r"(?:retryinfo|retry[_\s]?delay|retry[_\s]?after)\D*?(\d+(?:\.\d+)?)\s*s?",
+                        str(ae),
+                        re.IGNORECASE,
+                    )
+                    retry_delay = float(delay_match.group(1)) if delay_match else 0.0
+
+                    if is_per_day:
+                        raise ProviderUnavailableError(
+                            f"Gemini daily API quota reached (quotaId contains PerDay): {ae}"
+                        ) from ae
+
+                    if retry_delay > 60.0:
+                        raise ProviderUnavailableError(
+                            f"Gemini retry delay exceeds 60s ({retry_delay:.0f}s): {ae}"
+                        ) from ae
+
                     total_elapsed = time.perf_counter() - start_time
                     if (
                         attempt < self.max_retries

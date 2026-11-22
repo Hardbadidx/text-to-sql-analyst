@@ -364,3 +364,108 @@ def test_mock_provider_invalid_model_fails_fast_as_provider_unavailable(test_set
     assert "model" in result.explanation.lower()
 
 
+def test_human_readable_provider_error_and_debug_error_in_log(test_settings):
+    """Explanations must be short and human-readable while debug_error captures the raw error."""
+    raw_error_text = (
+        "429 Resource has been exhausted (e.g. check quota). "
+        "Quota exceeded for quota metric 'Generate Content API requests per day' and limit "
+        "'GenerateContentRequestsPerDayPerProject' of service 'generativelanguage.googleapis.com'. "
+        "{'error': {'code': 429, 'message': 'Resource exhausted'}}"
+    )
+    mock_provider = MockLLMProvider(
+        responses=[ProviderUnavailableError(raw_error_text)]
+    )
+    agent = Text2SQLAgent(custom_settings=test_settings, llm_provider=mock_provider)
+    result = agent.ask("What is total revenue?")
+
+    assert result.status == "provider_unavailable"
+    # Explanation and error_message must be concise and human-readable, not the raw dump
+    assert "Daily API quota limit reached" in result.error_message
+    assert "Daily API quota limit reached" in result.explanation
+    assert raw_error_text not in result.error_message
+    assert result.debug_error == raw_error_text
+
+    # Verify audit log captures both clean error_message and full debug_error
+    log_path = Path(test_settings.log_file)
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert entry["status"] == "provider_unavailable"
+    assert "Daily API quota limit reached" in entry["error_message"]
+    assert entry["debug_error"] == raw_error_text
+
+
+def test_destructive_paraphrases_refused_deterministically():
+    """Destructive paraphrases (wipe, erase, clear, purge, truncate) must be refused before any LLM call."""
+    destructive_prompts = [
+        "Wipe all patients from the database",
+        "Erase all records from treatments",
+        "Clear all invoices",
+        "Purge all appointments",
+        "Remove all doctor records",
+        "Truncate table patients",
+        "Delete all appointments",
+        "Drop table patients",
+    ]
+    for prompt in destructive_prompts:
+        refusal = Text2SQLAgent._check_deterministic_refusal(prompt)
+        assert refusal is not None, f"Expected '{prompt}' to be refused, but it was allowed."
+        assert "refused" in refusal.lower()
+
+
+def test_benign_trigger_word_questions_allowed_deterministically():
+    """Benign analytical questions with trigger words (drop-off, dropped out, last updated, count of deleted) must be allowed."""
+    benign_prompts = [
+        "What is the appointment drop-off rate?",
+        "How many patients dropped out?",
+        "When was the last updated appointment?",
+        "Count of cancelled or deleted appointments",
+        "What is the drop-off in monthly revenue?",
+        "Show me appointments that were updated recently",
+    ]
+    for prompt in benign_prompts:
+        refusal = Text2SQLAgent._check_deterministic_refusal(prompt)
+        assert refusal is None, f"Expected '{prompt}' to be allowed, but it was falsely refused: {refusal}"
+
+
+def test_gemini_provider_per_day_429_fails_fast_without_retries():
+    """GeminiProvider on 429 with PerDay quota must fail fast immediately with no backoff retries."""
+    from google.genai.errors import APIError
+
+    from text2sql.llm.gemini import GeminiProvider
+
+    provider = GeminiProvider(api_key="test-key", max_retries=3)
+    call_count = [0]
+
+    def failing_fn():
+        call_count[0] += 1
+        raise APIError(
+            429,
+            "Resource has been exhausted: Quota exceeded for quotaId: GenerateContentRequestsPerDayPerProject",
+        )
+
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        provider._execute_with_backoff(failing_fn)
+
+    assert call_count[0] == 1, "Must fail immediately without retrying on PerDay quota"
+    assert "daily" in str(exc_info.value).lower() or "perday" in str(exc_info.value).lower()
+
+
+def test_gemini_provider_long_retry_delay_fails_fast_without_retries():
+    """GeminiProvider on 429 with retry delay > 60s must fail immediately with no backoff retries."""
+    from google.genai.errors import APIError
+
+    from text2sql.llm.gemini import GeminiProvider
+
+    provider = GeminiProvider(api_key="test-key", max_retries=3)
+    call_count = [0]
+
+    def failing_fn():
+        call_count[0] += 1
+        raise APIError(429, "Resource exhausted. RetryInfo retryDelay: 120s")
+
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        provider._execute_with_backoff(failing_fn)
+
+    assert call_count[0] == 1, "Must fail immediately without retrying when retryDelay > 60s"
+    assert "exceeds 60s" in str(exc_info.value).lower()
+
+

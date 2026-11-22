@@ -630,3 +630,38 @@ def test_empty_table_expression_fails_closed(validator):
     assert validator.is_denylisted("patients.phone")
     assert validator.is_denylisted("[patients].[email]")
     assert not validator.is_denylisted("patients.id")
+
+
+# --- Binary / Predicate Subclass Function Allowlist Tests ---
+
+
+def test_functions_subclassing_binary_or_predicate_are_blocked(validator):
+    """Functions whose AST class subclasses exp.Binary or exp.Predicate must not bypass the allowlist."""
+    disallowed = [
+        "SELECT json_extract(id, '$.key') FROM appointments",
+        "SELECT id FROM appointments WHERE id REGEXP 'abc'",
+        "SELECT regexp(id, 'abc') FROM appointments",
+        "SELECT zeroblob(64) FROM appointments",
+        "SELECT randomblob(64) FROM appointments",
+        "SELECT load_extension('evil') FROM appointments",
+    ]
+    for q in disallowed:
+        res = validator.validate(q)
+        assert not res.is_valid, f"Expected disallowed function query to fail, but it passed: {q}"
+        assert "is not allowed" in res.error_message
+
+
+def test_allowed_binary_predicate_operators_and_collate_pass(validator):
+    """Allowed operators (LIKE, GLOB, BETWEEN, IN, IS NULL), EXISTS, and COLLATE NOCASE must pass."""
+    allowed = [
+        "SELECT * FROM patients WHERE first_name LIKE '%Jane%'",
+        "SELECT * FROM patients WHERE first_name GLOB '*Jane*'",
+        "SELECT * FROM appointments WHERE id BETWEEN 1 AND 10",
+        "SELECT * FROM appointments WHERE id IN (1, 2, 3)",
+        "SELECT * FROM appointments WHERE scheduled_at IS NOT NULL",
+        "SELECT id FROM patients WHERE EXISTS (SELECT 1 FROM appointments WHERE appointments.patient_id = patients.id)",
+        "SELECT id, first_name FROM patients ORDER BY first_name COLLATE NOCASE",
+    ]
+    for q in allowed:
+        res = validator.validate(q)
+        assert res.is_valid, f"Expected valid query to pass, got error: {res.error_message}. Query: {q}"
