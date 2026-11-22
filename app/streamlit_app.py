@@ -110,12 +110,15 @@ def render_sidebar(agent: Text2SQLAgent, eval_summary: dict[str, Any]) -> None:
 
         # 4. Evaluation Benchmark Summary (Dynamically read from latest.json)
         st.subheader("📊 Benchmark Results")
-        st.caption(f"Evaluated on {eval_summary['model']} (Commit: `{eval_summary['git_commit']}`)")
-        st.write(f"- **Exact Match Accuracy**: `{eval_summary['exact_accuracy_pct']}%`")
-        st.write(f"- **Lenient Accuracy**: `{eval_summary['lenient_accuracy_pct']}%`")
-        st.write(f"- **Safety Block Rate**: `{eval_summary['safety_block_rate_pct']}%`")
-        st.write(f"- **Policy Refusal**: `{eval_summary['policy_refusal_status']}`")
-        st.write(f"- **Mean Latency**: `{eval_summary['mean_latency_ms']:.1f} ms`")
+        if not eval_summary.get("available", False):
+            st.caption("eval results unavailable")
+        else:
+            st.caption(f"Evaluated on {eval_summary['model']} (Commit: `{eval_summary['git_commit']}`)")
+            st.write(f"- **Exact Match Accuracy**: `{eval_summary['exact_accuracy_pct']}%`")
+            st.write(f"- **Lenient Accuracy**: `{eval_summary['lenient_accuracy_pct']}%`")
+            st.write(f"- **Safety Block Rate**: `{eval_summary['safety_block_rate_pct']}%`")
+            st.write(f"- **Policy Refusal**: `{eval_summary['policy_refusal_status']}`")
+            st.write(f"- **Mean Latency**: `{eval_summary['mean_latency_ms']:.1f} ms`")
 
         st.divider()
 

@@ -608,6 +608,7 @@ def test_check_quota_limit_and_remaining():
 def test_load_eval_summary_from_latest_json():
     """load_eval_summary must dynamically parse metrics from eval/results/latest.json with commit 7bbd679."""
     summary = load_eval_summary()
+    assert summary["available"] is True
     assert summary["model"] == "gemini-3.5-flash-lite"
     assert summary["git_commit"] == "7bbd679"
     assert summary["total_questions"] == 56
@@ -617,13 +618,27 @@ def test_load_eval_summary_from_latest_json():
     assert "Refused correctly" in summary["policy_refusal_status"]
 
 
-def test_load_eval_summary_missing_file_fallback(tmp_path):
-    """load_eval_summary must return graceful defaults if latest.json does not exist."""
+def test_load_eval_summary_missing_or_unreadable(tmp_path):
+    """When latest.json is missing or corrupted, load_eval_summary must return available=False
+
+    and 'eval results unavailable'. It must NEVER report 0.0 or N/A as if they were results.
+    """
+    # 1. Missing file
     missing = tmp_path / "non_existent_results.json"
-    summary = load_eval_summary(missing)
-    assert isinstance(summary, dict)
-    assert summary["total_questions"] == 0
-    assert summary["exact_accuracy_pct"] == 0.0
+    summary_missing = load_eval_summary(missing)
+    assert isinstance(summary_missing, dict)
+    assert summary_missing["available"] is False
+    assert summary_missing["message"] == "eval results unavailable"
+    assert "exact_accuracy_pct" not in summary_missing
+
+    # 2. Corrupted / unreadable file
+    corrupt = tmp_path / "corrupt_latest.json"
+    corrupt.write_text("{broken_json: true", encoding="utf-8")
+    summary_corrupt = load_eval_summary(corrupt)
+    assert isinstance(summary_corrupt, dict)
+    assert summary_corrupt["available"] is False
+    assert summary_corrupt["message"] == "eval results unavailable"
+    assert "exact_accuracy_pct" not in summary_corrupt
 
 
 # ---------------------------------------------------------------------------

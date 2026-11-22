@@ -270,15 +270,8 @@ def load_eval_summary(latest_json_path: Path | str | None = None) -> dict[str, A
     path = Path(latest_json_path) if latest_json_path is not None else DEFAULT_LATEST_JSON_PATH
     if not path.exists():
         return {
-            "model": "Unknown",
-            "git_commit": "unknown",
-            "git_dirty": False,
-            "exact_accuracy_pct": 0.0,
-            "lenient_accuracy_pct": 0.0,
-            "safety_block_rate_pct": 0.0,
-            "total_questions": 0,
-            "policy_refusal_status": "N/A",
-            "mean_latency_ms": 0.0,
+            "available": False,
+            "message": "eval results unavailable",
         }
 
     try:
@@ -288,7 +281,14 @@ def load_eval_summary(latest_json_path: Path | str | None = None) -> dict[str, A
         meta = data.get("metadata", {})
         metrics = data.get("metrics", {})
 
+        if not metrics or not meta:
+            return {
+                "available": False,
+                "message": "eval results unavailable",
+            }
+
         return {
+            "available": True,
             "model": meta.get("model", "gemini-3.5-flash-lite"),
             "git_commit": meta.get("git_commit", "7bbd679")[:7],
             "git_dirty": meta.get("git_dirty", False),
@@ -301,13 +301,6 @@ def load_eval_summary(latest_json_path: Path | str | None = None) -> dict[str, A
         }
     except Exception:
         return {
-            "model": "Unknown",
-            "git_commit": "unknown",
-            "git_dirty": False,
-            "exact_accuracy_pct": 0.0,
-            "lenient_accuracy_pct": 0.0,
-            "safety_block_rate_pct": 0.0,
-            "total_questions": 0,
-            "policy_refusal_status": "N/A",
-            "mean_latency_ms": 0.0,
+            "available": False,
+            "message": "eval results unavailable",
         }

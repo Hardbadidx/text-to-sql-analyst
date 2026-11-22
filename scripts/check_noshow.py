@@ -1,7 +1,7 @@
 import sqlite3
 import sys
 
-db = sys.argv[1] if len(sys.argv) > 1 else "data/clinic.db"  # adjust if your db path differs
+db = sys.argv[1] if len(sys.argv) > 1 else "clinic.db"
 con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
 cols = [r[1] for r in con.execute("PRAGMA table_info(appointments)")]
 print("columns:", cols)
