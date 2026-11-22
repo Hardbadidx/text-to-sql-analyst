@@ -19,10 +19,12 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
+from app.streamlit_app import render_result_view
 from app.ui_utils import (
     EXAMPLE_QUESTIONS,
     agent_result_to_record,
@@ -711,4 +713,74 @@ def test_record_live_query_prevents_double_counting():
     count5, counted5 = record_live_query(current_count=count4, status="ok", already_counted=True)
     assert count5 == 2
     assert counted5 is False
+
+
+def test_no_deprecated_use_container_width_in_app():
+    """Ensure no deprecated use_container_width is used in the app/ directory."""
+    app_dir = Path(__file__).resolve().parent.parent / "app"
+    for py_file in app_dir.glob("*.py"):
+        content = py_file.read_text(encoding="utf-8")
+        assert "use_container_width" not in content, f"Deprecated use_container_width found in {py_file}"
+
+
+def test_demo_mode_custom_question_suppresses_replay_banner():
+    """When a custom question is asked in Demo Mode and no cached answer exists,
+
+    render_result_view must NOT show the 'Demo Mode Replay' info banner,
+    and must display the 'Demo Data Unavailable' message.
+    """
+    # 1. Uncached question record in Demo Mode
+    uncached_record = {
+        "question": "What is the secret doctor password?",
+        "status": "error",
+        "sql": None,
+        "df": None,
+        "row_count": 0,
+        "explanation": "Demo data unavailable for this question.",
+        "attempts": 0,
+        "latency_ms": 0.0,
+        "is_demo": True,
+        "error_message": "Demo data unavailable: No pre-verified benchmark response exists in demo_cache.json.",
+        "debug_error": None,
+        "chart_type": "table-only",
+        "chart_figure": None,
+    }
+
+    with patch("streamlit.info") as mock_info, patch("streamlit.warning") as mock_warning:
+        render_result_view(uncached_record)
+
+        # "Demo Mode Replay" must NOT be displayed
+        for call_args in mock_info.call_args_list:
+            assert "Demo Mode Replay" not in call_args[0][0]
+
+        # "Demo Data Unavailable" MUST be displayed
+        warning_texts = [call_args[0][0] for call_args in mock_warning.call_args_list]
+        assert any("Demo Data Unavailable" in text for text in warning_texts)
+
+    # 2. Cached benchmark question record in Demo Mode
+    cached_record = {
+        "question": "How many total patients are registered in the clinic?",
+        "status": "ok",
+        "sql": "SELECT COUNT(*) FROM patients",
+        "df": pd.DataFrame([{"total_patients": 5000}]),
+        "row_count": 1,
+        "explanation": "Pre-verified benchmark response from demonstration cache.",
+        "attempts": 1,
+        "latency_ms": 1200.0,
+        "is_demo": True,
+        "error_message": None,
+        "debug_error": None,
+        "chart_type": "table-only",
+        "chart_figure": None,
+    }
+
+    with patch("streamlit.info") as mock_info, \
+         patch("streamlit.columns", return_value=(MagicMock(), MagicMock(), MagicMock())), \
+         patch("streamlit.tabs", return_value=(MagicMock(), MagicMock())):
+        render_result_view(cached_record)
+
+        # "Demo Mode Replay" MUST be displayed for valid cached demo entry
+        info_texts = [call_args[0][0] for call_args in mock_info.call_args_list]
+        assert any("Demo Mode Replay" in text for text in info_texts)
+
 

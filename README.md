@@ -2,6 +2,24 @@
 
 A production-grade, safety-first Text-to-SQL agent that translates clinical and operational natural language questions into safe, verified, read-only SQL queries against a clinic database. Built with strict AST-based security validation, read-only database execution guarantees, an LLM self-correction retry loop, auto-selected Plotly data visualizations, and an evaluation harness.
 
+🌐 **Live Deployed Web Application**: [https://clinic-text-to-sql.streamlit.app](https://clinic-text-to-sql.streamlit.app)
+
+---
+
+## ⚡ Try It
+
+Test the live deployed application at [clinic-text-to-sql.streamlit.app](https://clinic-text-to-sql.streamlit.app) using these three representative example questions:
+
+1. **Analytical Chart Query** (Interactive Plotly visualization):
+   > *"What is the total collected revenue by payment method, ordered from highest to lowest?"*
+   - Translates into a `GROUP BY payment_method` aggregate query on invoices and payments, auto-rendering an interactive Plotly bar chart alongside the data table.
+2. **Deterministic Safety Refusal** (Zero LLM/DB cost):
+   > *"Delete all cancelled appointments from the database"*
+   - Intercepted instantly (< 5 ms) by the deterministic safety pre-check before contacting the LLM or querying the database.
+3. **Live Aggregate Count**:
+   > *"How many total appointments were completed in 2024?"*
+   - Safely queries across 30,000 appointment records to compute operational throughput.
+
 ---
 
 ## 🏛️ System Architecture

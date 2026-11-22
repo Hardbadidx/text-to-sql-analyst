@@ -112,7 +112,7 @@ def render_sidebar(agent: Text2SQLAgent, eval_summary: dict[str, Any]) -> None:
                     if col.primary_key:
                         col_type += " 🔑 [PK]"
                     cols_data.append({"Column": col.name, "Type": col_type})
-                st.dataframe(pd.DataFrame(cols_data), hide_index=True, use_container_width=True)
+                st.dataframe(pd.DataFrame(cols_data), hide_index=True, width="stretch")
 
         st.divider()
 
@@ -151,7 +151,7 @@ def render_sidebar(agent: Text2SQLAgent, eval_summary: dict[str, Any]) -> None:
                     st.session_state["active_result"] = hist_entry
                     st.session_state["current_question"] = q_text
 
-            if st.button("🗑️ Clear History", use_container_width=True):
+            if st.button("🗑️ Clear History", width="stretch"):
                 st.session_state["history"] = []
                 st.session_state["active_result"] = None
 
@@ -270,8 +270,9 @@ def render_result_view(result: dict[str, Any] | Any) -> None:
     refusal_reason = getattr(result, "refusal_reason", None) if not isinstance(result, dict) else result.get("refusal_reason")
     is_demo = getattr(result, "is_demo", False) if not isinstance(result, dict) else result.get("is_demo", False)
 
-    # 1. Demo Mode Notice
-    if is_demo:
+    # 1. Demo Mode Notice (only shown when serving a pre-verified cached demo replay)
+    is_demo_unavailable = "demo data unavailable" in (err_msg or "").lower()
+    if is_demo and not is_demo_unavailable and status == "ok":
         st.info("💡 **Demo Mode Replay**: Serving pre-verified benchmark response from the demonstration cache.")
 
     # 2. Human-Readable Status Banner
@@ -311,19 +312,19 @@ def render_result_view(result: dict[str, Any] | Any) -> None:
         tab_chart, tab_data = st.tabs(["Interactive Visualization", "Data Table"])
 
         with tab_data:
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width="stretch")
 
         with tab_chart:
             c_type = chart_type or auto_pick_chart_type(df)
             if c_type == "table-only" or len(df) == 0:
                 st.caption("ℹ️ Tabular presentation is best for this single-value or empty result set.")
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, width="stretch")
             else:
                 fig = chart_figure or generate_plotly_figure(df, chart_type=c_type, title=question)
                 if fig is not None:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 else:
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, width="stretch")
 
     # 6. Plain-English Explanation
     if explanation:
@@ -362,7 +363,7 @@ def main() -> None:
     for i, ex in enumerate(EXAMPLE_QUESTIONS):
         target_col = row1_cols[i] if i < 3 else row2_cols[i - 3]
         with target_col:
-            if st.button(f"{ex['icon']} {ex['title']}", key=f"ex_{ex['id']}", use_container_width=True):
+            if st.button(f"{ex['icon']} {ex['title']}", key=f"ex_{ex['id']}", width="stretch"):
                 st.session_state["current_question"] = ex["question"]
                 run_query(ex["question"], agent)
 
@@ -375,7 +376,7 @@ def main() -> None:
             value=st.session_state.get("current_question", ""),
             placeholder="e.g., What is the total invoiced revenue by specialty in 2024?",
         )
-        submit_btn = st.form_submit_button("🚀 Run Query", type="primary", use_container_width=True)
+        submit_btn = st.form_submit_button("🚀 Run Query", type="primary", width="stretch")
 
     if submit_btn and user_question.strip():
         st.session_state["current_question"] = user_question.strip()
