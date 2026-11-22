@@ -193,7 +193,7 @@ def test_adversarial_pragma_table_info_function(validator):
     res = validator.validate(sql)
     assert not res.is_valid
     err = res.error_message.lower()
-    assert "unauthorized" in err or "disallowed" in err or "forbidden" in err
+    assert "not allowed" in err or "unauthorized" in err or "disallowed" in err or "forbidden" in err
 
 
 def test_adversarial_sqlite_master_access(validator):
@@ -212,7 +212,7 @@ def test_adversarial_table_valued_functions(validator):
         res = validator.validate(sql)
         assert not res.is_valid
         err = res.error_message.lower()
-        assert "unauthorized" in err or "disallowed" in err or "forbidden" in err
+        assert "not allowed" in err or "unauthorized" in err or "disallowed" in err or "forbidden" in err
 
 
 def test_adversarial_load_extension_call(validator):
@@ -220,16 +220,16 @@ def test_adversarial_load_extension_call(validator):
     sql = "SELECT load_extension('malicious.dll')"
     res = validator.validate(sql)
     assert not res.is_valid
-    assert "unauthorized function" in res.error_message.lower()
+    assert res.error_message == "Function 'load_extension' is not allowed."
 
 
 def test_adversarial_disallowed_functions(validator):
     """Functions like zeroblob, randomblob, char must be rejected by the function allowlist."""
-    for fn in ["zeroblob(100)", "randomblob(100)"]:
+    for fn, name in [("zeroblob(100)", "zeroblob"), ("randomblob(100)", "randomblob")]:
         sql = f"SELECT {fn} FROM doctors"
         res = validator.validate(sql)
         assert not res.is_valid
-        assert "unauthorized function" in res.error_message.lower()
+        assert res.error_message == f"Function '{name}' is not allowed."
 
 
 def test_adversarial_quoted_cased_bracketed_backticked_denylist(validator):
@@ -548,12 +548,69 @@ def test_allowed_window_functions(validator):
 
 
 def test_disallowed_functions_still_rejected(validator):
-    """Ensure zeroblob, randomblob, and load_extension remain rejected."""
-    for fn in ["zeroblob(16)", "randomblob(16)", "load_extension('lib')"]:
+    """Ensure zeroblob, randomblob, and load_extension remain rejected with precise error messages."""
+    for fn, name in [
+        ("zeroblob(16)", "zeroblob"),
+        ("randomblob(16)", "randomblob"),
+        ("load_extension('lib')", "load_extension"),
+    ]:
         sql = f"SELECT {fn}"
         res = validator.validate(sql)
         assert not res.is_valid
-        assert "unauthorized function" in res.error_message.lower()
+        assert res.error_message == f"Function '{name}' is not allowed."
+
+
+# --- Regression Tests for Operators, Predicates, and Compound Expressions ---
+
+
+def test_regression_compound_predicates_and_operators_pass(validator):
+    """Ensure operators and predicates are never blocked by the function allowlist."""
+    queries_that_must_pass = [
+        # The three exact queries from the smoke test
+        "SELECT COUNT(*) FROM appointments WHERE status = 'completed'",
+        "SELECT d.specialty, ROUND(SUM(i.amount), 2) FROM invoices i JOIN appointments a ON a.id = i.appointment_id JOIN doctors d ON d.id = a.doctor_id GROUP BY d.specialty ORDER BY 2 DESC",
+        "SELECT COUNT(*) FROM appointments WHERE status = 'completed' AND scheduled_at >= '2024-01-01' AND scheduled_at <= '2024-12-31 23:59:59'",
+        "SELECT COUNT(*) FROM appointments WHERE status = 'completed' AND strftime('%Y', scheduled_at) = '2024'",
+        # Nested AND/OR with strftime
+        "SELECT * FROM appointments WHERE (status = 'completed' OR status = 'cancelled') AND strftime('%Y', scheduled_at) = '2024'",
+        # BETWEEN
+        "SELECT * FROM appointments WHERE scheduled_at BETWEEN '2024-01-01' AND '2024-12-31' AND status = 'completed'",
+        # IN (subquery)
+        "SELECT id, first_name FROM patients WHERE id IN (SELECT patient_id FROM appointments WHERE status = 'completed')",
+        # LIKE
+        "SELECT id, first_name FROM patients WHERE first_name LIKE 'A%'",
+        # IS NULL / IS NOT NULL
+        "SELECT * FROM appointments WHERE scheduled_at IS NOT NULL AND status IS NULL",
+        # CASE WHEN inside SUM
+        "SELECT doctor_id, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS comp_count FROM appointments GROUP BY doctor_id",
+        # Arithmetic in SELECT
+        "SELECT id, duration_minutes * 60 + 10 AS total_seconds FROM appointments",
+        # String concatenation
+        "SELECT first_name || ' ' || last_name AS full_name FROM doctors",
+        # HAVING with AND
+        "SELECT doctor_id, COUNT(*) FROM appointments GROUP BY doctor_id HAVING COUNT(*) > 5 AND doctor_id IS NOT NULL",
+    ]
+
+    for q in queries_that_must_pass:
+        res = validator.validate(q)
+        assert res.is_valid, f"Expected query to be valid, but got error: {res.error_message}. Query was: {q}"
+
+
+def test_regression_malicious_functions_inside_expressions_fail(validator):
+    """Ensure disallowed functions are blocked even when nested inside compound WHERE or CASE."""
+    # zeroblob inside a WHERE with AND
+    res_zero = validator.validate(
+        "SELECT * FROM appointments WHERE status = 'completed' AND zeroblob(16) IS NOT NULL"
+    )
+    assert not res_zero.is_valid
+    assert res_zero.error_message == "Function 'zeroblob' is not allowed."
+
+    # load_extension inside CASE
+    res_ext = validator.validate(
+        "SELECT CASE WHEN load_extension('lib') THEN 1 ELSE 0 END FROM appointments"
+    )
+    assert not res_ext.is_valid
+    assert res_ext.error_message == "Function 'load_extension' is not allowed."
 
 
 # --- Defensive Branch Fail-Closed Tests ---

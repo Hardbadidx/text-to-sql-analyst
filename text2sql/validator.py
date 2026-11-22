@@ -100,6 +100,8 @@ class SQLValidator:
         "rtrim",
         "instr",
         "replace",
+        "concat",
+        "concat_ws",
         "coalesce",
         "nullif",
         "ifnull",
@@ -137,6 +139,29 @@ class SQLValidator:
         "pragma_",
         "json_",
         "generate_series",
+    )
+
+    # AST nodes that inherit from exp.Func in sqlglot but represent logical operators,
+    # predicates, conditional control flow, or internal transpilation helpers
+    EXCLUDED_FUNC_TYPES: tuple[type[exp.Expression], ...] = (
+        exp.Connector,
+        exp.And,
+        exp.Or,
+        exp.Not,
+        exp.Case,
+        exp.If,
+        exp.Binary,
+        exp.Unary,
+        exp.Predicate,
+        exp.Concat,
+        exp.TsOrDsToTimestamp,
+        exp.TsOrDsToDate,
+        exp.TsOrDsToDateStr,
+        exp.TsOrDsToDatetime,
+        exp.TsOrDsToTime,
+        exp.TsOrDiToDi,
+        exp.TsOrDsAdd,
+        exp.TsOrDsDiff,
     )
 
     def __init__(
@@ -256,28 +281,28 @@ class SQLValidator:
         # with fixed reference date (2024-12-31) so queries never evaluate against the live wall-clock
         ast, rewrote_dates = self._rewrite_relative_dates(ast)
 
-        # 6. Function allowlist enforcement: reject load_extension, zeroblob, randomblob, etc.
+        # 6. Function allowlist enforcement: reject load_extension, zeroblob, randomblob, and unauthorized functions
         for func_node in ast.find_all(exp.Func):
-            # Skip sqlglot internal date/timestamp transpile helper nodes
-            if isinstance(func_node, (exp.TsOrDsToTimestamp, exp.TsOrDsToDate)):
+            # Skip operators, predicates, CASE/WHEN, and transpiler helpers that inherit from exp.Func
+            if isinstance(func_node, self.EXCLUDED_FUNC_TYPES):
                 continue
 
-            func_raw_name = func_node.sql(dialect="sqlite").split("(")[0].strip().lower()
-            func_key = func_node.key.lower() if hasattr(func_node, "key") else ""
             if isinstance(func_node, exp.Anonymous):
-                func_name = func_node.name.lower()
+                func_name = func_node.name.lower().strip()
             else:
-                func_name = func_raw_name or func_key
+                key_name = getattr(func_node, "key", "").lower().strip()
+                sql_name = func_node.sql_name().lower().strip() if hasattr(func_node, "sql_name") else ""
+                func_name = key_name or sql_name
 
             is_allowed = (
                 func_name in self.ALLOWED_FUNCTIONS
-                or func_raw_name in self.ALLOWED_FUNCTIONS
-                or func_key in self.ALLOWED_FUNCTIONS
+                or getattr(func_node, "key", "").lower().strip() in self.ALLOWED_FUNCTIONS
+                or (hasattr(func_node, "sql_name") and func_node.sql_name().lower().strip() in self.ALLOWED_FUNCTIONS)
             )
             if not is_allowed:
                 return ValidationResult(
                     is_valid=False,
-                    error_message=f"Disallowed or unauthorized function call '{func_name or func_raw_name}()'.",
+                    error_message=f"Function '{func_name}' is not allowed.",
                 )
 
         # 6. Extract CTE definitions and subquery aliases to treat as valid virtual tables
