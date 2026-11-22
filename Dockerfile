@@ -23,6 +23,7 @@ COPY --chown=appuser:appuser app/ app/
 COPY --chown=appuser:appuser text2sql/ text2sql/
 COPY --chown=appuser:appuser scripts/ scripts/
 COPY --chown=appuser:appuser clinic.db clinic.db
+COPY --chown=appuser:appuser data_checksum.txt data_checksum.txt
 COPY --chown=appuser:appuser eval/results/latest.json eval/results/latest.json
 
 # Switch to non-root user

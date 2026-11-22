@@ -60,7 +60,7 @@ The deterministic keyword/regex pre-check (`_check_deterministic_refusal`) is st
 
 ## 📊 Evaluation Benchmark & Results
 
-All metrics below are read directly from [`eval/results/latest.json`](file:///c:/Users/kshit/Desktop/Text_To_SQL/eval/results/latest.json), frozen on clean git commit **`7bbd679`** using `gemini-3.5-flash-lite`:
+All metrics below are read directly from [`eval/results/latest.json`](eval/results/latest.json), frozen on clean git commit **`7bbd679`** using `gemini-3.5-flash-lite`:
 
 | Metric | Benchmark Result | Evaluated Set |
 | :--- | :--- | :--- |
@@ -85,11 +85,11 @@ All metrics below are read directly from [`eval/results/latest.json`](file:///c:
 3. **Validator Catches in Benchmark**:
    - In the benchmark run, `ast_validator` had `0` runtime catches because `gemini-3.5-flash-lite` conformed cleanly to the prompt instructions. The validator's actual defensive power is verified by the adversarial suite in `eval/safety_cases.yaml` and the unit test suite in `tests/test_validator.py` (which tests 40+ injection, shadowing, and denylist bypass vectors).
 4. **Gold-SQL Uniformity & Changelog**:
-   - As documented in [`eval/CHANGELOG.md`](file:///c:/Users/kshit/Desktop/Text_To_SQL/eval/CHANGELOG.md), gold queries were audited and pruned so that gold queries return only the identifying columns plus the values specifically requested by the question.
+   - As documented in [`eval/CHANGELOG.md`](eval/CHANGELOG.md), gold queries were audited and pruned so that gold queries return only the identifying columns plus the values specifically requested by the question.
 5. **Synthetic Data**:
    - The clinic database (`clinic.db`) consists of synthetic clinic SaaS operational records generated for benchmarking purposes.
 6. **Independent Demo Verification**:
-   - Stored demo cache results were verified against `clinic.db` independently via [`scripts/check_demo_independent.py`](file:///c:/Users/kshit/Desktop/Text_To_SQL/scripts/check_demo_independent.py) and [`scripts/check_noshow.py`](file:///c:/Users/kshit/Desktop/Text_To_SQL/scripts/check_noshow.py). The 2024 no-show rate is confirmed at **`10.03%`** (1,492 no-shows / 14,879 appointments).
+   - Stored demo cache results were verified against `clinic.db` independently via [`scripts/check_demo_independent.py`](scripts/check_demo_independent.py) and [`scripts/check_noshow.py`](scripts/check_noshow.py). The 2024 no-show rate is confirmed at **`10.03%`** (1,492 no-shows / 14,879 appointments).
 
 ---
 
@@ -125,7 +125,7 @@ All metrics below are read directly from [`eval/results/latest.json`](file:///c:
 
 ### Option 2: Docker Container
 
-The container runs as an unprivileged user (`appuser`, UID 1000) on `python:3.12-slim` and includes an automated healthcheck.
+The container runs as an unprivileged user (`appuser`, UID 1000) on `python:3.12-slim` and includes an automated healthcheck. The Docker build and healthcheck are verified by CI on GitHub Actions on every push and pull request.
 
 1. **Build the Docker Image**:
    ```bash

@@ -33,3 +33,37 @@ jobs:
       - name: Run Pytest Suite
         run: |
           pytest -q
+
+  docker:
+    name: Docker Build & Healthcheck
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t text2sql-analyst:ci .
+
+      - name: Run container & verify healthcheck
+        run: |
+          # Start container in detached mode with unprivileged appuser
+          docker run -d --name test-container -p 8501:8501 text2sql-analyst:ci
+          
+          # Poll health endpoint with timeout (up to 60s)
+          timeout 60s bash -c '
+            echo "Waiting for Streamlit server health endpoint..."
+            until curl -s -f http://localhost:8501/_stcore/health; do
+              sleep 2
+            done
+            echo "Health endpoint is UP!"
+          '
+          
+          # Confirm container is running healthy
+          docker ps | grep test-container
+          
+          # Cleanup container
+          docker stop test-container
+          docker rm test-container
