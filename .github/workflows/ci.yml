@@ -47,6 +47,10 @@ jobs:
         run: |
           docker build -t text2sql-analyst:ci .
 
+      - name: Verify module imports inside container
+        run: |
+          docker run --rm text2sql-analyst:ci python -c "import app.ui_utils, text2sql.agent"
+
       - name: Run container & verify healthcheck
         run: |
           # Start container in detached mode with unprivileged appuser

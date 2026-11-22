@@ -42,9 +42,13 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"app/streamlit_app.py" = ["E402"]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v"
 timeout = 60
+pythonpath = ["."]
