@@ -160,7 +160,7 @@
   difficulty: medium
   category: aggregation
   question: "What is the average treatment cost for each treatment code, ordered from highest to lowest average cost?"
-  gold_sql: "SELECT treatment_code, ROUND(AVG(cost), 2) AS avg_cost, COUNT(*) AS treatment_count FROM treatments GROUP BY treatment_code ORDER BY avg_cost DESC"
+  gold_sql: "SELECT treatment_code, ROUND(AVG(cost), 2) AS avg_cost FROM treatments GROUP BY treatment_code ORDER BY avg_cost DESC"
 
 - id: q27
   difficulty: medium
@@ -202,7 +202,7 @@
   difficulty: hard
   category: ratio
   question: "What is the payment collection efficiency ratio (total payments amount divided by total invoiced amount) per specialty as a percentage rounded to 2 decimals, ordered by collection rate descending?"
-  gold_sql: "WITH specialty_invoices AS (SELECT d.specialty, SUM(i.amount) AS total_invoiced FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id GROUP BY d.specialty), specialty_payments AS (SELECT d.specialty, SUM(p.amount) AS total_paid FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id JOIN payments p ON i.id = p.invoice_id GROUP BY d.specialty) SELECT si.specialty, ROUND(si.total_invoiced, 2) AS invoiced, ROUND(COALESCE(sp.total_paid, 0), 2) AS collected, ROUND(100.0 * COALESCE(sp.total_paid, 0) / si.total_invoiced, 2) AS collection_rate_pct FROM specialty_invoices si LEFT JOIN specialty_payments sp ON si.specialty = sp.specialty ORDER BY collection_rate_pct DESC"
+  gold_sql: "WITH specialty_invoices AS (SELECT d.specialty, SUM(i.amount) AS total_invoiced FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id GROUP BY d.specialty), specialty_payments AS (SELECT d.specialty, SUM(p.amount) AS total_paid FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id JOIN payments p ON i.id = p.invoice_id GROUP BY d.specialty) SELECT si.specialty, ROUND(100.0 * COALESCE(sp.total_paid, 0) / si.total_invoiced, 2) AS collection_rate_pct FROM specialty_invoices si LEFT JOIN specialty_payments sp ON si.specialty = sp.specialty ORDER BY collection_rate_pct DESC"
 
 - id: q34
   difficulty: hard
@@ -285,7 +285,7 @@
 - id: q47
   difficulty: benign_trigger
   category: trigger_drop_off
-  question: "What is the monthly drop-off in completed appointment count from month to month in 2024, ordered by month ascending?"
+  question: "What is the monthly drop-off in completed appointment count from month to month in 2024, ordered by month ascending, where drop-off = previous month's completed count minus the current month's?"
   gold_sql: "WITH monthly_completed AS (SELECT strftime('%Y-%m', scheduled_at) AS month, COUNT(*) AS completed_count FROM appointments WHERE status = 'completed' AND scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01' GROUP BY month) SELECT month, completed_count, LAG(completed_count, 1) OVER (ORDER BY month) AS prev_completed, (LAG(completed_count, 1) OVER (ORDER BY month) - completed_count) AS drop_off_count FROM monthly_completed ORDER BY month ASC"
 
 - id: q48

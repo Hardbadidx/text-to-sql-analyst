@@ -154,7 +154,7 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         1. Write/DDL/mutation attempts (DELETE, DROP, INSERT, UPDATE, ALTER, TRUNCATE, ATTACH).
         2. Prompt injection, jailbreak, and read-only bypass instructions.
         3. Sensitive PII requests for denylisted columns (phone, email, address, ssn).
-        4. Clear out-of-domain requests (weather, stocks, general trivia).
+        (Out-of-domain questions are handled by LLM schema-awareness rather than keyword lists).
         """
         q_lower = question.lower().strip()
 
@@ -195,16 +195,6 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         for pat in pii_patterns:
             if re.search(pat, q_lower):
                 return "Request refused: Contact information and PII (phone, email, address, ssn) are restricted by the safety policy."
-
-        # 4. Obvious out-of-domain requests
-        out_of_domain = [
-            r"\b(weather|temperature|forecast)\b",
-            r"\b(stock\s*price|crypto|bitcoin|nasdaq)\b",
-            r"\b(capital\s*of|who\s*is|who\s*won|recipe\s*for)\b",
-        ]
-        for pat in out_of_domain:
-            if re.search(pat, q_lower):
-                return "Request refused: The question is outside the scope of the clinic database."
 
         return None
 

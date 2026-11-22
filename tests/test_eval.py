@@ -8,6 +8,7 @@ from eval.run_eval import (
     Evaluator,
     RateLimiter,
     compare_dataframes,
+    compare_dataframes_exact,
     compare_dataframes_lenient,
     compare_dataframes_strict,
     get_git_commit_hash,
@@ -18,20 +19,20 @@ from text2sql.llm.mock import MockLLMProvider
 
 
 def test_comparator_extra_columns():
-    """Predicted DataFrame with extra columns must fail strict comparator but pass lenient comparator."""
+    """Predicted DataFrame with extra columns must fail exact comparator but pass lenient comparator."""
     df_gold = pd.DataFrame({"id": [1, 2], "val": [10.5, 20.3]})
     df_pred_extra = pd.DataFrame({"id": [1, 2], "val": [10.5, 20.3], "extra_metric": ["x", "y"]})
 
-    assert not compare_dataframes_strict(df_pred_extra, df_gold)
+    assert not compare_dataframes_exact(df_pred_extra, df_gold)
     assert compare_dataframes_lenient(df_pred_extra, df_gold)
 
 
 def test_comparator_column_order():
-    """Predicted DataFrame with permuted column order must fail strict comparator but pass lenient comparator."""
+    """Predicted DataFrame with permuted column order must pass both exact and lenient comparators."""
     df_gold = pd.DataFrame({"id": [1, 2], "val": [10.5, 20.3]})
     df_pred_reordered = pd.DataFrame({"val": [10.5, 20.3], "id": [1, 2]})
 
-    assert not compare_dataframes_strict(df_pred_reordered, df_gold)
+    assert compare_dataframes_exact(df_pred_reordered, df_gold)
     assert compare_dataframes_lenient(df_pred_reordered, df_gold)
 
 

@@ -725,3 +725,26 @@ def test_adversarial_sqlite_master_and_star_expansion_still_blocked(validator):
     res_rejected = validator.validate("SELECT * FROM patients", reject_stars_on_sensitive=True)
     assert not res_rejected.is_valid
     assert "contain sensitive columns" in res_rejected.error_message.lower()
+
+
+def test_percent_rank_and_cume_dist_allowed(validator):
+    """Percentile window functions (percent_rank, cume_dist, nth_value) must pass validation."""
+    sql_pr = """
+    SELECT first_name, last_name, hourly_rate,
+           PERCENT_RANK() OVER (ORDER BY hourly_rate DESC) AS pct_rank
+    FROM doctors
+    """
+    res_pr = validator.validate(sql_pr)
+    assert res_pr.is_valid, f"percent_rank should be allowed, got: {res_pr.error_message}"
+
+    sql_cd = """
+    SELECT first_name, last_name, hourly_rate,
+           CUME_DIST() OVER (ORDER BY hourly_rate DESC) AS c_dist
+    FROM doctors
+    """
+    res_cd = validator.validate(sql_cd)
+    assert res_cd.is_valid, f"cume_dist should be allowed, got: {res_cd.error_message}"
+
+    # Dangerous functions must still fail
+    assert not validator.validate("SELECT zeroblob(100)").is_valid
+    assert not validator.validate("SELECT load_extension('foo')").is_valid

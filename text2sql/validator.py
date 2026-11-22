@@ -133,6 +133,12 @@ class SQLValidator:
         "firstvalue",
         "last_value",
         "lastvalue",
+        "percent_rank",
+        "percentrank",
+        "cume_dist",
+        "cumedist",
+        "nth_value",
+        "nthvalue",
     }
 
     # Forbidden system / table-valued tables
