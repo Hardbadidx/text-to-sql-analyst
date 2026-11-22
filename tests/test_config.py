@@ -63,3 +63,18 @@ def test_validator_with_empty_env_denylist_still_blocks_pii():
         result = validator.validate(query)
         assert not result.is_valid, f"Expected {sensitive_col} to be blocked even when denylist is emptied"
         assert sensitive_col in (result.error_message or "").lower()
+
+
+def test_settings_reads_api_key_from_streamlit_secrets(monkeypatch):
+    """When GEMINI_API_KEY is not in env, Settings should read it from Streamlit secrets if present."""
+    import sys
+    from types import ModuleType
+
+    # Mock streamlit with secrets
+    mock_st = ModuleType("streamlit")
+    mock_st.secrets = {"GEMINI_API_KEY": "streamlit-secret-test-key-12345"}
+    monkeypatch.setitem(sys.modules, "streamlit", mock_st)
+
+    cfg = Settings(gemini_api_key=None)
+    assert cfg.gemini_api_key == "streamlit-secret-test-key-12345"
+

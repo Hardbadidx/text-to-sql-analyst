@@ -90,3 +90,25 @@ python eval/run_eval.py
 ```
 
 *Results are recorded in `eval/results/latest.json` alongside model name, timestamp, and git commit hash.*
+
+---
+
+## Streamlit Interactive Application
+
+Launch the interactive web interface locally:
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+### Application Features & Safety Architecture
+- **Question Input & Benchmark Example Chips**: 6 clickable example chips covering single-value metrics, ranked tables, monthly trend lines, and payment distributions.
+- **SQL Code & Interactive Visualizations**: Inspect generated SQL code blocks, scrollable pandas dataframes, and responsive auto-picked Plotly charts.
+- **Strict AST Security**: Human-readable banners for policy refusals, validator blocks, and provider quota limits (zero stack traces or API key leaks).
+- **Sidebar Data Explorer**:
+  - Non-denylisted schema viewer (tables, column types, row counts; sensitive PII fields completely hidden).
+  - Fixed reference date (`2024-12-31`) and synthetic dataset notice.
+  - Evaluation summary dynamically loaded from `eval/results/latest.json`.
+  - Clickable session history to re-inspect previous results without re-running.
+- **Demo Mode & Quota Protection**: Max 10 live queries per session. When quota is reached or demo mode is toggled, answers to benchmark questions replay from verified cache.
+

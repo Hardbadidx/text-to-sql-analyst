@@ -70,6 +70,23 @@ class Settings(BaseSettings):
         description="Google Gemini model identifier.",
     )
 
+    @field_validator("gemini_api_key", mode="before")
+    @classmethod
+    def load_from_streamlit_secrets_if_none(cls, v: object) -> str | None:
+        """If gemini_api_key is not in env or .env, attempt to load from Streamlit secrets."""
+        if v:
+            return str(v)
+        try:
+            import streamlit as st
+            if hasattr(st, "secrets"):
+                if "GEMINI_API_KEY" in st.secrets:
+                    return str(st.secrets["GEMINI_API_KEY"])
+                if "gemini_api_key" in st.secrets:
+                    return str(st.secrets["gemini_api_key"])
+        except Exception:
+            pass
+        return None
+
     # Logging and Audit
     log_file: Path = Field(
         default=Path("logs/queries.jsonl"),
