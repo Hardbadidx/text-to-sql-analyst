@@ -49,7 +49,7 @@ jobs:
 
       - name: Verify module imports inside container
         run: |
-          docker run --rm text2sql-analyst:ci python -c "import app.ui_utils, text2sql.agent"
+          docker run --rm --entrypoint python text2sql-analyst:ci -c "import app.ui_utils, text2sql.agent"
 
       - name: Run container & verify healthcheck
         run: |
