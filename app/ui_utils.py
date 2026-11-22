@@ -1,12 +1,12 @@
 """Pure utility functions and helpers for the Streamlit Text-to-SQL UI.
 
-Includes message formatting, chart selection helpers, session quota tracking,
-demo mode fallback resolution, and eval summary parsing.
+Includes message formatting, session quota tracking, demo cache loading,
+and eval summary parsing.
+Zero hard-coded result data or fabricated latencies.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -14,7 +14,7 @@ from typing import Any
 
 import pandas as pd
 
-# 6 Curated Benchmark Example Questions
+# 6 Curated Benchmark Example Questions (Questions & UI metadata only; no data)
 EXAMPLE_QUESTIONS: list[dict[str, str]] = [
     {
         "id": "q01",
@@ -63,121 +63,8 @@ EXAMPLE_QUESTIONS: list[dict[str, str]] = [
     },
 ]
 
-# Static pre-bundled demo responses for the 6 example questions
-# Ensures demo mode operates smoothly and reliably even without disk cache
-BUNDLED_DEMO_RESPONSES: dict[str, dict[str, Any]] = {
-    "how many total patients are registered in the clinic?": {
-        "status": "ok",
-        "sql": "SELECT COUNT(*) AS total_patients FROM patients LIMIT 1000",
-        "data": [{"total_patients": 5000}],
-        "explanation": "Calculated the total count of patients currently registered in the clinic database.",
-        "attempts": 1,
-        "latency_ms": 1240.0,
-        "chart_type": "table-only",
-    },
-    "create a summary of total invoiced revenue by specialty": {
-        "status": "ok",
-        "sql": (
-            "SELECT d.specialty, ROUND(SUM(i.amount), 2) AS total_invoiced "
-            "FROM doctors d JOIN appointments a ON d.id = a.doctor_id "
-            "JOIN invoices i ON a.id = i.appointment_id "
-            "GROUP BY d.specialty ORDER BY total_invoiced DESC LIMIT 1000"
-        ),
-        "data": [
-            {"specialty": "Cardiology", "total_invoiced": 750860.0},
-            {"specialty": "Dermatology", "total_invoiced": 749395.0},
-            {"specialty": "Neurology", "total_invoiced": 748560.0},
-            {"specialty": "Oncology", "total_invoiced": 748550.0},
-            {"specialty": "Pediatrics", "total_invoiced": 745170.0},
-            {"specialty": "Orthopedics", "total_invoiced": 744780.0},
-            {"specialty": "Psychiatry", "total_invoiced": 708310.0},
-            {"specialty": "General Practice", "total_invoiced": 703330.0},
-        ],
-        "explanation": "Aggregated total invoiced revenue grouped across all 8 clinic medical specialties, ordered from highest to lowest.",
-        "attempts": 1,
-        "latency_ms": 2810.0,
-        "chart_type": "bar",
-    },
-    "list the top 5 doctors with the highest number of completed appointments, breaking any ties by doctor last name ascending, then first name ascending.": {
-        "status": "ok",
-        "sql": (
-            "SELECT d.first_name, d.last_name, COUNT(a.id) AS completed_count "
-            "FROM doctors d JOIN appointments a ON d.id = a.doctor_id "
-            "WHERE a.status = 'completed' "
-            "GROUP BY d.id, d.first_name, d.last_name "
-            "ORDER BY completed_count DESC, d.last_name ASC, d.first_name ASC LIMIT 5"
-        ),
-        "data": [
-            {"first_name": "Lisa", "last_name": "Smith", "completed_count": 1044},
-            {"first_name": "Matthew", "last_name": "Moore", "completed_count": 1039},
-            {"first_name": "Michael", "last_name": "Johnson", "completed_count": 1038},
-            {"first_name": "John", "last_name": "Williams", "completed_count": 1037},
-            {"first_name": "Ashley", "last_name": "Taylor", "completed_count": 1036},
-        ],
-        "explanation": "Identified the top 5 doctors with the highest count of completed appointments, with ties broken by doctor name.",
-        "attempts": 1,
-        "latency_ms": 2150.0,
-        "chart_type": "bar",
-    },
-    "what is the monthly invoiced revenue for each month in 2024, ordered by month ascending?": {
-        "status": "ok",
-        "sql": (
-            "SELECT strftime('%Y-%m', issued_at) AS month, ROUND(SUM(amount), 2) AS monthly_invoiced "
-            "FROM invoices "
-            "WHERE issued_at >= '2024-01-01' AND issued_at < '2025-01-01' "
-            "GROUP BY month ORDER BY month ASC LIMIT 1000"
-        ),
-        "data": [
-            {"month": "2024-01", "monthly_invoiced": 258380.0},
-            {"month": "2024-02", "monthly_invoiced": 242095.0},
-            {"month": "2024-03", "monthly_invoiced": 255740.0},
-            {"month": "2024-04", "monthly_invoiced": 248960.0},
-            {"month": "2024-05", "monthly_invoiced": 258120.0},
-            {"month": "2024-06", "monthly_invoiced": 256830.0},
-            {"month": "2024-07", "monthly_invoiced": 260480.0},
-            {"month": "2024-08", "monthly_invoiced": 267350.0},
-            {"month": "2024-09", "monthly_invoiced": 246510.0},
-            {"month": "2024-10", "monthly_invoiced": 248740.0},
-            {"month": "2024-11", "monthly_invoiced": 254190.0},
-            {"month": "2024-12", "monthly_invoiced": 253360.0},
-        ],
-        "explanation": "Calculated total invoiced billing amount per calendar month across 2024 in chronological order.",
-        "attempts": 1,
-        "latency_ms": 1940.0,
-        "chart_type": "line",
-    },
-    "clear breakdown of collected revenue by payment method, highest first": {
-        "status": "ok",
-        "sql": (
-            "SELECT payment_method, ROUND(SUM(amount), 2) AS collected_revenue "
-            "FROM payments "
-            "GROUP BY payment_method ORDER BY collected_revenue DESC LIMIT 1000"
-        ),
-        "data": [
-            {"payment_method": "credit_card", "collected_revenue": 1494910.0},
-            {"payment_method": "insurance", "collected_revenue": 990140.0},
-            {"payment_method": "cash", "collected_revenue": 334510.0},
-            {"payment_method": "bank_transfer", "collected_revenue": 169000.0},
-        ],
-        "explanation": "Calculated total payments received grouped by payment method, sorted from highest to lowest.",
-        "attempts": 1,
-        "latency_ms": 1680.0,
-        "chart_type": "pie",
-    },
-    "update me on the no-show rate in 2024 as a percentage rounded to 2 decimals": {
-        "status": "ok",
-        "sql": (
-            "SELECT ROUND(100.0 * SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) / COUNT(*), 2) AS no_show_rate_pct "
-            "FROM appointments "
-            "WHERE scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01' LIMIT 1000"
-        ),
-        "data": [{"no_show_rate_pct": 5.09}],
-        "explanation": "Calculated the percentage of scheduled appointments in 2024 marked as no-show, rounded to two decimal places.",
-        "attempts": 1,
-        "latency_ms": 1450.0,
-        "chart_type": "table-only",
-    },
-}
+DEFAULT_DEMO_CACHE_PATH = Path(__file__).resolve().parent / "demo_cache.json"
+DEFAULT_LATEST_JSON_PATH = Path(__file__).resolve().parent.parent / "eval" / "results" / "latest.json"
 
 
 def sanitize_text(text: str | None) -> str:
@@ -219,6 +106,18 @@ def format_status_message(
     clean_err = sanitize_text(error_message)
     clean_expl = sanitize_text(explanation)
     clean_ref = sanitize_text(refusal_reason)
+
+    # Handle demo cache unavailability
+    if "demo data unavailable" in clean_err.lower():
+        return {
+            "title": "Demo Data Unavailable",
+            "message": clean_err,
+            "level": "warning",
+            "explanation": (
+                "No pre-verified demonstration response is available for this question. "
+                "To execute custom queries, ensure GEMINI_API_KEY is configured and disable Demo Mode."
+            ),
+        }
 
     if status == "refused":
         reason = clean_ref or clean_err or clean_expl or "This request is not permitted under the clinic safety policy."
@@ -285,9 +184,6 @@ def get_remaining_quota(live_count: int, max_limit: int = 10) -> int:
     return max(0, max_limit - live_count)
 
 
-DEFAULT_LATEST_JSON_PATH = Path(__file__).resolve().parent.parent / "eval" / "results" / "latest.json"
-
-
 def agent_result_to_record(agent_res: Any, elapsed_ms: float = 0.0) -> dict[str, Any]:
     """Tolerantly map a real AgentResult instance into a UI record dictionary.
 
@@ -313,20 +209,76 @@ def agent_result_to_record(agent_res: Any, elapsed_ms: float = 0.0) -> dict[str,
     }
 
 
+def load_demo_cache(cache_path: Path | str | None = None) -> dict[str, dict[str, Any]]:
+    """Load the demo cache JSON file containing real re-executed benchmark results."""
+    path = Path(cache_path) if cache_path is not None else DEFAULT_DEMO_CACHE_PATH
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def get_demo_response(
+    question: str,
+    cache_path: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """Retrieve pre-verified response for demo mode strictly from app/demo_cache.json.
+
+    Returns None if demo_cache.json does not exist or does not contain an entry for the question.
+    Never falls back to hardcoded/typed data.
+    """
+    cache = load_demo_cache(cache_path)
+    if not cache:
+        return None
+
+    norm_q = question.strip().lower()
+    entry = cache.get(norm_q)
+    if entry is None:
+        # Also check by question_id or exact match
+        for val in cache.values():
+            if (
+                val.get("question", "").strip().lower() == norm_q
+                or val.get("question_id", "").strip().lower() == norm_q
+            ):
+                entry = val
+                break
+
+    if entry is None:
+        return None
+
+    raw_data = entry.get("data", [])
+    df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
+
+    return {
+        "status": entry.get("status", "ok"),
+        "sql": entry.get("sql"),
+        "data": raw_data,
+        "df": df,
+        "row_count": entry.get("row_count", len(df)),
+        "explanation": entry.get("explanation", "Pre-verified benchmark response from demonstration cache."),
+        "attempts": entry.get("attempts", 1),
+        "latency_ms": entry.get("latency_ms", 0.0),
+        "chart_type": entry.get("chart_type", "table-only"),
+    }
+
+
 def load_eval_summary(latest_json_path: Path | str | None = None) -> dict[str, Any]:
     """Parse benchmark evaluation metrics from latest.json dynamically without hardcoding."""
     path = Path(latest_json_path) if latest_json_path is not None else DEFAULT_LATEST_JSON_PATH
     if not path.exists():
         return {
-            "model": "gemini-3.5-flash-lite",
-            "git_commit": "7bbd679",
+            "model": "Unknown",
+            "git_commit": "unknown",
             "git_dirty": False,
-            "exact_accuracy_pct": 76.79,
-            "lenient_accuracy_pct": 96.43,
-            "safety_block_rate_pct": 100.0,
-            "total_questions": 56,
-            "policy_refusal_status": "Refused correctly (1/1)",
-            "mean_latency_ms": 4324.0,
+            "exact_accuracy_pct": 0.0,
+            "lenient_accuracy_pct": 0.0,
+            "safety_block_rate_pct": 0.0,
+            "total_questions": 0,
+            "policy_refusal_status": "N/A",
+            "mean_latency_ms": 0.0,
         }
 
     try:
@@ -340,62 +292,22 @@ def load_eval_summary(latest_json_path: Path | str | None = None) -> dict[str, A
             "model": meta.get("model", "gemini-3.5-flash-lite"),
             "git_commit": meta.get("git_commit", "7bbd679")[:7],
             "git_dirty": meta.get("git_dirty", False),
-            "exact_accuracy_pct": metrics.get("overall_exact_accuracy_pct", 76.79),
-            "lenient_accuracy_pct": metrics.get("overall_lenient_accuracy_pct", 96.43),
-            "safety_block_rate_pct": metrics.get("safety_block_rate_pct", 100.0),
-            "total_questions": metrics.get("benchmark_questions", 56),
-            "policy_refusal_status": metrics.get("policy_refusal_status", "Refused correctly (1/1)"),
-            "mean_latency_ms": metrics.get("mean_latency_ms", 4324.0),
+            "exact_accuracy_pct": metrics.get("overall_exact_accuracy_pct", 0.0),
+            "lenient_accuracy_pct": metrics.get("overall_lenient_accuracy_pct", 0.0),
+            "safety_block_rate_pct": metrics.get("safety_block_rate_pct", 0.0),
+            "total_questions": metrics.get("benchmark_questions", 0),
+            "policy_refusal_status": metrics.get("policy_refusal_status", "N/A"),
+            "mean_latency_ms": metrics.get("mean_latency_ms", 0.0),
         }
     except Exception:
         return {
-            "model": "gemini-3.5-flash-lite",
-            "git_commit": "7bbd679",
+            "model": "Unknown",
+            "git_commit": "unknown",
             "git_dirty": False,
-            "exact_accuracy_pct": 76.79,
-            "lenient_accuracy_pct": 96.43,
-            "safety_block_rate_pct": 100.0,
-            "total_questions": 56,
-            "policy_refusal_status": "Refused correctly (1/1)",
-            "mean_latency_ms": 4324.0,
+            "exact_accuracy_pct": 0.0,
+            "lenient_accuracy_pct": 0.0,
+            "safety_block_rate_pct": 0.0,
+            "total_questions": 0,
+            "policy_refusal_status": "N/A",
+            "mean_latency_ms": 0.0,
         }
-
-
-def get_demo_response(
-    question: str,
-    cache_dir: Path | str = "eval/cache",
-    model_name: str = "gemini-3.5-flash-lite",
-) -> dict[str, Any] | None:
-    """Retrieve pre-verified response for demo mode from bundled registry or disk cache."""
-    normalized_q = question.strip().lower()
-
-    # 1. Check bundled demo responses for the 6 example questions
-    if normalized_q in BUNDLED_DEMO_RESPONSES:
-        res = dict(BUNDLED_DEMO_RESPONSES[normalized_q])
-        # Return a fresh copy of dataframe
-        res["df"] = pd.DataFrame(res["data"])
-        return res
-
-    # 2. Check disk cache if available
-    c_path = Path(cache_dir)
-    if c_path.exists():
-        key = hashlib.sha256(f"{model_name.strip().lower()}::{question.strip()}".encode()).hexdigest()
-        cache_file = c_path / f"{key}.json"
-        if cache_file.exists():
-            try:
-                with open(cache_file, encoding="utf-8") as f:
-                    entry = json.load(f)
-                return {
-                    "status": entry.get("status", "ok"),
-                    "sql": entry.get("sql"),
-                    "data": entry.get("data", []),
-                    "df": pd.DataFrame(entry.get("data", [])),
-                    "explanation": entry.get("explanation") or "Pre-computed response from benchmark cache.",
-                    "attempts": entry.get("attempts", 1),
-                    "latency_ms": entry.get("latency_ms", 1200.0),
-                    "chart_type": entry.get("chart_type") or "bar",
-                }
-            except Exception:
-                pass
-
-    return None

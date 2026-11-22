@@ -6,15 +6,18 @@ Tests:
 - Strict detection failing if the UI reads any attribute not defined on AgentResult.
 - Human-readable banner message formatting with path/secret sanitization.
 - Quota counting and session limit management.
-- Pre-bundled demo response fallback for all 6 benchmark examples.
-- Dynamic parsing of eval/results/latest.json (verifying commit 7bbd679).
-- Streamlit AppTest smoke test loading streamlit_app.py in demo mode and clicking ex_q01.
+- Live database execution verification for all entries in app/demo_cache.json (floats to 2dp).
+- Test proving wrong demo answer causes verification failure.
+- Test proving zero numeric result literals appear in app/ui_utils.py.
+- Dynamic parsing of eval/results/latest.json.
+- Streamlit AppTest smoke test verifying demo replay, "Original Latency" metric, and zero live calls.
 Zero live API calls.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -30,7 +33,7 @@ from app.ui_utils import (
     load_eval_summary,
     sanitize_text,
 )
-from text2sql.agent import AgentResult
+from text2sql.agent import AgentResult, Text2SQLAgent
 from text2sql.charts import auto_pick_chart_type, generate_plotly_figure
 
 # ---------------------------------------------------------------------------
@@ -209,11 +212,7 @@ def test_ui_never_reads_undefined_agent_result_attributes(
     real_blocked_result,
     real_provider_unavailable_result,
 ):
-    """The UI adapter agent_result_to_record must never read attributes not defined on AgentResult.
-
-    StrictAgentResultProxy raises DisallowedAttributeAccessError if any invalid attribute
-    (such as 'refusal_reason') is accessed.
-    """
+    """The UI adapter agent_result_to_record must never read attributes not defined on AgentResult."""
     for res in [real_ok_result, real_refused_result, real_blocked_result, real_provider_unavailable_result]:
         proxy = StrictAgentResultProxy(res)
         # Must execute cleanly without DisallowedAttributeAccessError
@@ -263,6 +262,170 @@ def test_ast_check_no_undefined_agent_result_attributes_in_ui_code():
 
 
 # ---------------------------------------------------------------------------
+# Tests: Demo Cache Verification & Database Execution Match
+# ---------------------------------------------------------------------------
+
+
+def test_demo_cache_entries_match_live_database_execution():
+    """Verify that every entry in app/demo_cache.json matches live database execution.
+
+    Re-executes each entry's SQL against clinic.db through AST validator and executor,
+    asserting stored rows match the live result (floats to 2dp).
+    Specifically verifies that q54 2024 no-show rate is 10.03% (and not 5.09%).
+    """
+    cache_path = Path("app/demo_cache.json")
+    assert cache_path.exists(), "app/demo_cache.json must exist"
+
+    with open(cache_path, encoding="utf-8") as f:
+        cache = json.load(f)
+
+    assert len(cache) >= 6, "Demo cache must contain at least the 6 benchmark example questions"
+
+    agent = Text2SQLAgent()
+
+    for _norm_q, entry in cache.items():
+        sql = entry["sql"]
+        stored_data = entry["data"]
+
+        # Validate through AST validator
+        v_res = agent.validator.validate(sql)
+        assert v_res.is_valid, f"Validator failed on demo entry '{entry['question_id']}': {v_res.error_message}"
+
+        # Execute through read-only executor
+        exec_res = agent.executor.execute(v_res.validated_sql)
+        live_df = exec_res.df
+        live_data = live_df.to_dict(orient="records")
+
+        assert len(live_data) == len(stored_data), (
+            f"Row count mismatch for '{entry['question_id']}': live={len(live_data)}, stored={len(stored_data)}"
+        )
+
+        # Compare row by row, column by column (floats to 2dp)
+        for i, (live_row, stored_row) in enumerate(zip(live_data, stored_data, strict=True)):
+            assert set(live_row.keys()) == set(stored_row.keys()), (
+                f"Column mismatch in row {i} for '{entry['question_id']}': live={list(live_row.keys())}, stored={list(stored_row.keys())}"
+            )
+            for k in live_row:
+                l_val = live_row[k]
+                s_val = stored_row[k]
+                if isinstance(l_val, float) or isinstance(s_val, float):
+                    assert round(float(l_val), 2) == round(float(s_val), 2), (
+                        f"Value mismatch in row {i}, col '{k}' for '{entry['question_id']}': live={l_val}, stored={s_val}"
+                    )
+                else:
+                    assert l_val == s_val, (
+                        f"Value mismatch in row {i}, col '{k}' for '{entry['question_id']}': live={l_val}, stored={s_val}"
+                    )
+
+        # Specifically verify q54 no-show rate is 10.03
+        if entry["question_id"] == "q54":
+            assert len(stored_data) == 1
+            col_name = next(iter(stored_data[0].keys()))
+            val = round(float(stored_data[0][col_name]), 2)
+            assert val == 10.03, f"Expected true 2024 no-show rate 10.03, got {val}"
+            assert val != 5.09, "5.09 is the old fabricated value and must not be present"
+
+
+def test_wrong_demo_answer_causes_verification_failure():
+    """Ensure a wrong demo answer causes the verification logic to fail with AssertionError."""
+    # Corrupted entry with wrong 5.09 no-show rate
+    corrupted_entry = {
+        "question_id": "q54",
+        "sql": (
+            "SELECT ROUND(SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS no_show_percentage "
+            "FROM appointments WHERE scheduled_at >= '2024-01-01 00:00:00' AND scheduled_at <= '2024-12-31 23:59:59' LIMIT 1000"
+        ),
+        "data": [{"no_show_percentage": 5.09}],  # WRONG! True value in clinic.db is 10.03
+    }
+
+    agent = Text2SQLAgent()
+    v_res = agent.validator.validate(corrupted_entry["sql"])
+    exec_res = agent.executor.execute(v_res.validated_sql)
+    live_val = exec_res.df.iloc[0, 0]
+
+    with pytest.raises(AssertionError, match="Value mismatch"):
+        # Comparing live (10.03) against corrupted (5.09) must fail
+        assert round(float(live_val), 2) == round(float(corrupted_entry["data"][0]["no_show_percentage"]), 2), (
+            f"Value mismatch: live={live_val}, stored={corrupted_entry['data'][0]['no_show_percentage']}"
+        )
+
+
+def test_no_numeric_result_literals_in_ui_utils():
+    """Verify that app/ui_utils.py contains zero hard-coded result numbers or fabricated data."""
+    target_file = Path("app/ui_utils.py")
+    assert target_file.exists()
+
+    tree = ast.parse(target_file.read_text(encoding="utf-8"), filename=str(target_file))
+
+    # Known result values that should never appear as literals in ui_utils.py
+    forbidden_result_numbers = {
+        5000,
+        10.03,
+        5.09,
+        750860.0,
+        749395.0,
+        748560.0,
+        748550.0,
+        745170.0,
+        744780.0,
+        708310.0,
+        703330.0,
+        1044,
+        1039,
+        1038,
+        1037,
+        1036,
+        1031,
+        1016,
+        1014,
+        1012,
+        258380.0,
+        242095.0,
+        234205.0,
+        243755.0,
+        245140.0,
+        246205.0,
+        247675.0,
+        249030.0,
+        254620.0,
+        232980.0,
+        243175.0,
+        237645.0,
+        243965.0,
+        1494910.0,
+        990140.0,
+        334510.0,
+        169000.0,
+        2256390.0,
+        1747020.0,
+        511240.0,
+        486185.0,
+        1240.0,
+        2810.0,
+        2150.0,
+        1940.0,
+        1680.0,
+        1450.0,
+        4324.0,
+        76.79,
+        96.43,
+    }
+
+    found_literals = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            found_literals.add(node.value)
+
+    forbidden_found = found_literals.intersection(forbidden_result_numbers)
+    assert not forbidden_found, f"Found hardcoded result literals in app/ui_utils.py: {forbidden_found}"
+
+    # Also assert that BUNDLED_DEMO_RESPONSES does not exist in AST
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            assert node.id != "BUNDLED_DEMO_RESPONSES", "BUNDLED_DEMO_RESPONSES must be completely removed"
+
+
+# ---------------------------------------------------------------------------
 # Tests: Streamlit AppTest Smoke Test
 # ---------------------------------------------------------------------------
 
@@ -271,6 +434,7 @@ def test_streamlit_app_smoke_with_apptest():
     """Smoke test streamlit_app.py using AppTest with demo mode enabled.
 
     Clicks example chip 'ex_q01' ('Total Patients') and verifies no exceptions occur.
+    Asserts 'Original Latency' metric is displayed for demo replay.
     Zero live API calls.
     """
     from streamlit.testing.v1 import AppTest
@@ -292,6 +456,10 @@ def test_streamlit_app_smoke_with_apptest():
     sql_text = at.code[0].value.lower()
     assert "count" in sql_text and "patients" in sql_text
 
+    # Verify metric label shows 'Original Latency' for demo replay
+    metric_labels = [m.label for m in at.metric]
+    assert "Original Latency" in metric_labels
+
 
 # ---------------------------------------------------------------------------
 # Tests: Example Questions and Demo Response Resolution
@@ -310,7 +478,7 @@ def test_example_questions_count_and_structure():
 
 
 def test_get_demo_response_for_all_example_questions():
-    """Every example question in EXAMPLE_QUESTIONS must resolve to a valid demo response."""
+    """Every example question in EXAMPLE_QUESTIONS must resolve to a valid demo response from demo_cache.json."""
     for ex in EXAMPLE_QUESTIONS:
         resp = get_demo_response(ex["question"])
         assert resp is not None, f"Demo response missing for: {ex['question']}"
@@ -318,12 +486,20 @@ def test_get_demo_response_for_all_example_questions():
         assert resp["sql"] is not None and "SELECT" in resp["sql"]
         assert isinstance(resp["df"], pd.DataFrame)
         assert len(resp["df"]) > 0
+        assert resp["latency_ms"] > 0.0
         assert resp["chart_type"] in ("bar", "line", "pie", "table-only")
 
 
 def test_get_demo_response_unknown_question():
     """Random unknown question not in cache should return None."""
     resp = get_demo_response("What is the temperature in Antarctica right now at this second?")
+    assert resp is None
+
+
+def test_get_demo_response_missing_cache_file(tmp_path):
+    """get_demo_response must return None when demo cache JSON file does not exist."""
+    missing = tmp_path / "missing_demo_cache.json"
+    resp = get_demo_response("How many total patients are registered in the clinic?", cache_path=missing)
     assert resp is None
 
 
@@ -385,6 +561,17 @@ def test_format_status_message_provider_unavailable_quota():
     assert "Demo Mode" in msg["message"]
 
 
+def test_format_status_message_demo_data_unavailable():
+    """Demo data unavailable errors must produce a warning banner with clear user explanation."""
+    msg = format_status_message(
+        status="error",
+        error_message="Demo data unavailable: No pre-verified benchmark response exists in demo_cache.json.",
+    )
+    assert msg["level"] == "warning"
+    assert "Demo Data Unavailable" in msg["title"]
+    assert "Demo Mode" in msg["explanation"]
+
+
 def test_format_status_message_ok():
     """Successful queries must produce a success banner."""
     msg = format_status_message(status="ok", error_message=None, explanation="Retrieved 5 rows.")
@@ -435,8 +622,8 @@ def test_load_eval_summary_missing_file_fallback(tmp_path):
     missing = tmp_path / "non_existent_results.json"
     summary = load_eval_summary(missing)
     assert isinstance(summary, dict)
-    assert summary["git_commit"] == "7bbd679"
-    assert summary["total_questions"] == 56
+    assert summary["total_questions"] == 0
+    assert summary["exact_accuracy_pct"] == 0.0
 
 
 # ---------------------------------------------------------------------------

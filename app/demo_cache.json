@@ -1,0 +1,229 @@
+{
+  "how many total patients are registered in the clinic?": {
+    "question_id": "q01",
+    "title": "Total Patients",
+    "category": "Basic Metric",
+    "question": "How many total patients are registered in the clinic?",
+    "status": "ok",
+    "sql": "SELECT COUNT(*) AS total_patients FROM patients LIMIT 1000",
+    "data": [
+      {
+        "total_patients": 5000
+      }
+    ],
+    "row_count": 1,
+    "latency_ms": 3829.22,
+    "attempts": 1,
+    "chart_type": "table-only",
+    "explanation": "Re-executed from verified benchmark SQL against clinic.db."
+  },
+  "create a summary of total invoiced revenue by specialty": {
+    "question_id": "q53",
+    "title": "Invoiced by Specialty",
+    "category": "Revenue & Specialties",
+    "question": "Create a summary of total invoiced revenue by specialty",
+    "status": "ok",
+    "sql": "SELECT d.specialty, SUM(i.amount) AS total_invoiced_revenue FROM invoices AS i JOIN appointments AS a ON i.appointment_id = a.id JOIN doctors AS d ON a.doctor_id = d.id GROUP BY d.specialty ORDER BY total_invoiced_revenue DESC LIMIT 1000",
+    "data": [
+      {
+        "specialty": "Cardiology",
+        "total_invoiced_revenue": 750860.0
+      },
+      {
+        "specialty": "Dermatology",
+        "total_invoiced_revenue": 749395.0
+      },
+      {
+        "specialty": "Neurology",
+        "total_invoiced_revenue": 748560.0
+      },
+      {
+        "specialty": "Oncology",
+        "total_invoiced_revenue": 748550.0
+      },
+      {
+        "specialty": "Pediatrics",
+        "total_invoiced_revenue": 745170.0
+      },
+      {
+        "specialty": "Orthopedics",
+        "total_invoiced_revenue": 744780.0
+      },
+      {
+        "specialty": "Psychiatry",
+        "total_invoiced_revenue": 708310.0
+      },
+      {
+        "specialty": "General Practice",
+        "total_invoiced_revenue": 703330.0
+      }
+    ],
+    "row_count": 8,
+    "latency_ms": 16012.83,
+    "attempts": 1,
+    "chart_type": "bar",
+    "explanation": "Re-executed from verified benchmark SQL against clinic.db."
+  },
+  "list the top 5 doctors with the highest number of completed appointments, breaking any ties by doctor last name ascending, then first name ascending.": {
+    "question_id": "q18",
+    "title": "Top 5 Doctors",
+    "category": "Doctor Performance",
+    "question": "List the top 5 doctors with the highest number of completed appointments, breaking any ties by doctor last name ascending, then first name ascending.",
+    "status": "ok",
+    "sql": "SELECT d.id, d.first_name, d.last_name, d.specialty, COUNT(a.id) AS completed_appointments_count FROM doctors AS d JOIN appointments AS a ON d.id = a.doctor_id WHERE a.status = 'completed' GROUP BY d.id, d.first_name, d.last_name, d.specialty ORDER BY completed_appointments_count DESC, d.last_name ASC, d.first_name ASC LIMIT 5",
+    "data": [
+      {
+        "id": 10,
+        "first_name": "Lisa",
+        "last_name": "Smith",
+        "specialty": "Pediatrics",
+        "completed_appointments_count": 1044
+      },
+      {
+        "id": 20,
+        "first_name": "Michelle",
+        "last_name": "Ray",
+        "specialty": "Oncology",
+        "completed_appointments_count": 1031
+      },
+      {
+        "id": 6,
+        "first_name": "Jeffery",
+        "last_name": "Wagner",
+        "specialty": "Cardiology",
+        "completed_appointments_count": 1016
+      },
+      {
+        "id": 15,
+        "first_name": "Melanie",
+        "last_name": "Munoz",
+        "specialty": "Orthopedics",
+        "completed_appointments_count": 1014
+      },
+      {
+        "id": 5,
+        "first_name": "Robert",
+        "last_name": "Johnson",
+        "specialty": "Cardiology",
+        "completed_appointments_count": 1012
+      }
+    ],
+    "row_count": 5,
+    "latency_ms": 11713.22,
+    "attempts": 1,
+    "chart_type": "bar",
+    "explanation": "Re-executed from verified benchmark SQL against clinic.db."
+  },
+  "what is the monthly invoiced revenue for each month in 2024, ordered by month ascending?": {
+    "question_id": "q21",
+    "title": "Monthly Revenue 2024",
+    "category": "Time Series Trend",
+    "question": "What is the monthly invoiced revenue for each month in 2024, ordered by month ascending?",
+    "status": "ok",
+    "sql": "SELECT STRFTIME('%Y-%m', issued_at) AS month, SUM(amount) AS total_invoiced_revenue FROM invoices WHERE issued_at >= '2024-01-01' AND issued_at < '2025-01-01' GROUP BY month ORDER BY month ASC LIMIT 1000",
+    "data": [
+      {
+        "month": "2024-01",
+        "total_invoiced_revenue": 258380.0
+      },
+      {
+        "month": "2024-02",
+        "total_invoiced_revenue": 234205.0
+      },
+      {
+        "month": "2024-03",
+        "total_invoiced_revenue": 243755.0
+      },
+      {
+        "month": "2024-04",
+        "total_invoiced_revenue": 245140.0
+      },
+      {
+        "month": "2024-05",
+        "total_invoiced_revenue": 246205.0
+      },
+      {
+        "month": "2024-06",
+        "total_invoiced_revenue": 247675.0
+      },
+      {
+        "month": "2024-07",
+        "total_invoiced_revenue": 249030.0
+      },
+      {
+        "month": "2024-08",
+        "total_invoiced_revenue": 254620.0
+      },
+      {
+        "month": "2024-09",
+        "total_invoiced_revenue": 232980.0
+      },
+      {
+        "month": "2024-10",
+        "total_invoiced_revenue": 243175.0
+      },
+      {
+        "month": "2024-11",
+        "total_invoiced_revenue": 237645.0
+      },
+      {
+        "month": "2024-12",
+        "total_invoiced_revenue": 243965.0
+      }
+    ],
+    "row_count": 12,
+    "latency_ms": 1804.17,
+    "attempts": 1,
+    "chart_type": "line",
+    "explanation": "Re-executed from verified benchmark SQL against clinic.db."
+  },
+  "clear breakdown of collected revenue by payment method, highest first": {
+    "question_id": "q55",
+    "title": "Payment Method Breakdown",
+    "category": "Collections & Payments",
+    "question": "Clear breakdown of collected revenue by payment method, highest first",
+    "status": "ok",
+    "sql": "SELECT payment_method, SUM(amount) AS total_revenue FROM payments GROUP BY payment_method ORDER BY total_revenue DESC LIMIT 1000",
+    "data": [
+      {
+        "payment_method": "credit_card",
+        "total_revenue": 2256390.0
+      },
+      {
+        "payment_method": "insurance",
+        "total_revenue": 1747020.0
+      },
+      {
+        "payment_method": "bank_transfer",
+        "total_revenue": 511240.0
+      },
+      {
+        "payment_method": "cash",
+        "total_revenue": 486185.0
+      }
+    ],
+    "row_count": 4,
+    "latency_ms": 4909.79,
+    "attempts": 1,
+    "chart_type": "pie",
+    "explanation": "Re-executed from verified benchmark SQL against clinic.db."
+  },
+  "update me on the no-show rate in 2024 as a percentage rounded to 2 decimals": {
+    "question_id": "q54",
+    "title": "2024 No-Show Rate %",
+    "category": "Clinical Operations",
+    "question": "Update me on the no-show rate in 2024 as a percentage rounded to 2 decimals",
+    "status": "ok",
+    "sql": "SELECT ROUND(SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS no_show_percentage FROM appointments WHERE scheduled_at >= '2024-01-01 00:00:00' AND scheduled_at <= '2024-12-31 23:59:59' LIMIT 1000",
+    "data": [
+      {
+        "no_show_percentage": 10.03
+      }
+    ],
+    "row_count": 1,
+    "latency_ms": 1585.24,
+    "attempts": 1,
+    "chart_type": "table-only",
+    "explanation": "Re-executed from verified benchmark SQL against clinic.db."
+  }
+}

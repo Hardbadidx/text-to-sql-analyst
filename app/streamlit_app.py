@@ -157,9 +157,9 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "sql": demo_resp.get("sql"),
                 "df": demo_resp.get("df"),
                 "row_count": len(demo_resp["df"]) if demo_resp.get("df") is not None else 0,
-                "explanation": demo_resp.get("explanation", "Pre-verified benchmark response."),
+                "explanation": demo_resp.get("explanation", "Pre-verified benchmark response from demonstration cache."),
                 "attempts": demo_resp.get("attempts", 1),
-                "latency_ms": demo_resp.get("latency_ms", 1200.0),
+                "latency_ms": demo_resp.get("latency_ms", 0.0),
                 "is_demo": True,
                 "error_message": demo_resp.get("error_message"),
                 "debug_error": None,
@@ -190,9 +190,29 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "chart_type": "table-only",
                 "chart_figure": None,
             }
-            st.session_state["active_result"] = record
-            st.session_state["history"].append(record)
-            return
+        else:
+            # Demo mode active but query is not in demo_cache.json
+            record = {
+                "question": cleaned_q,
+                "status": "error",
+                "sql": None,
+                "df": None,
+                "row_count": 0,
+                "explanation": (
+                    "Demo data unavailable for this question. "
+                    "Only the 6 curated benchmark examples have pre-verified responses in Demo Mode."
+                ),
+                "attempts": 0,
+                "latency_ms": 0.0,
+                "is_demo": True,
+                "error_message": "Demo data unavailable: No pre-verified benchmark response exists in demo_cache.json.",
+                "debug_error": None,
+                "chart_type": "table-only",
+                "chart_figure": None,
+            }
+        st.session_state["active_result"] = record
+        st.session_state["history"].append(record)
+        return
 
     # Live Execution via Text2SQLAgent
     with st.spinner("Analyzing schema, generating SQL, and verifying AST constraints..."):
@@ -251,7 +271,8 @@ def render_result_view(result: dict[str, Any] | Any) -> None:
     if status == "ok" and df is not None:
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
-            st.metric("Latency", f"{latency_ms:.0f} ms")
+            latency_label = "Original Latency" if is_demo else "Latency"
+            st.metric(latency_label, f"{latency_ms:.0f} ms")
         with col_m2:
             st.metric("Attempts", f"{attempts} / 3")
         with col_m3:
