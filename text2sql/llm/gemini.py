@@ -57,7 +57,7 @@ class GeminiProvider(BaseLLMProvider):
         """Execute callable with capped backoff on transient rate limits (429) or spikes (503)."""
         if not self.api_key or self.client is None:
             raise ProviderUnavailableError(
-                "GEMINI_API_KEY is not configured. Please set GEMINI_API_KEY in your environment or .env file."
+                "No language model is configured on this deployment. Use Demo Mode."
             )
 
         backoff = self.initial_backoff

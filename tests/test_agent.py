@@ -499,4 +499,27 @@ def test_deterministic_refusal_destructive_operations_refused():
         assert refusal is not None, f"Prompt SHOULD have been pre-refused: {prompt}"
 
 
+def test_pre_check_refusal_with_raising_provider_factory():
+    """Deterministic pre-check must run BEFORE the LLM provider is constructed or contacted.
+
+    Even if the provider factory raises on construction, destructive queries must return status 'refused'.
+    """
+    def raising_factory():
+        raise RuntimeError("Provider factory failure: No language model configured or network down")
+
+    agent = Text2SQLAgent(provider_factory=raising_factory)
+
+    # 1. Destructive pre-check refusal: factory is NEVER constructed/called
+    destructive_q = "Delete all cancelled appointments from the database"
+    res = agent.ask(destructive_q)
+    assert res.status == "refused"
+    assert "refused" in res.explanation.lower() or "not permitted" in res.explanation.lower()
+
+    # 2. Benign query: triggers provider construction, catches failure, returns provider_unavailable
+    benign_q = "How many total patients are there?"
+    benign_res = agent.ask(benign_q)
+    assert benign_res.status == "provider_unavailable"
+    assert "No language model is configured" in benign_res.explanation
+
+
 

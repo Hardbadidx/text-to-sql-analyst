@@ -154,6 +154,9 @@ def format_status_message(
         if any(w in clean_err.lower() for w in ["quota", "perday", "429", "resource_exhausted"]):
             title = "API Daily Quota Reached"
             msg = "The live Gemini API quota has been reached for today. You can continue exploring pre-verified benchmark questions in Demo Mode."
+        elif any(w in clean_err.lower() for w in ["not configured", "no language model", "missing", "unsupported", "api key", "api_key", "authentication"]):
+            title = "No Language Model Configured"
+            msg = "No language model is configured on this deployment. Use Demo Mode."
         else:
             title = "Language Model Service Unavailable"
             msg = clean_err or "Unable to reach the language model provider. Please verify network access or switch to Demo Mode."
@@ -182,6 +185,29 @@ def check_quota_limit(live_count: int, max_limit: int = 10) -> bool:
 def get_remaining_quota(live_count: int, max_limit: int = 10) -> int:
     """Return the remaining live queries allowed for this session."""
     return max(0, max_limit - live_count)
+
+
+def should_consume_quota(status: str) -> bool:
+    """Determine whether an execution status should consume visitor live query quota.
+
+    Only queries that actually reached the model and returned an answer (status 'ok' or
+    query execution/validation 'error') consume visitor quota.
+    Failed provider calls ('provider_unavailable') and pre-check/policy refusals ('refused')
+    must NEVER consume quota.
+    """
+    return status not in ("refused", "provider_unavailable")
+
+
+def record_live_query(current_count: int, status: str, already_counted: bool = False) -> tuple[int, bool]:
+    """Pure function calculating the new live query count without double counting.
+
+    Returns (new_count, was_counted).
+    """
+    if already_counted:
+        return current_count, False
+    if not should_consume_quota(status):
+        return current_count, False
+    return current_count + 1, True
 
 
 def agent_result_to_record(agent_res: Any, elapsed_ms: float = 0.0) -> dict[str, Any]:

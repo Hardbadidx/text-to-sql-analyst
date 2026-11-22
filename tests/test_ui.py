@@ -31,7 +31,9 @@ from app.ui_utils import (
     get_demo_response,
     get_remaining_quota,
     load_eval_summary,
+    record_live_query,
     sanitize_text,
+    should_consume_quota,
 )
 from text2sql.agent import AgentResult, Text2SQLAgent
 from text2sql.charts import auto_pick_chart_type, generate_plotly_figure
@@ -666,3 +668,47 @@ def test_chart_selection_and_figure_generation_integration():
     df_single = pd.DataFrame({"total": [42]})
     assert auto_pick_chart_type(df_single) == "table-only"
     assert generate_plotly_figure(df_single) is None
+
+
+def test_should_consume_quota_pure_function():
+    """Only queries that reached the model and returned an answer consume quota."""
+    # 1. Successful query: model was contacted and answered
+    assert should_consume_quota("ok") is True
+
+    # 2. Error query: model generated a query that failed DB execution or AST validation
+    assert should_consume_quota("error") is True
+
+    # 3. Refusals: deterministic pre-checks or model refusals must NOT consume visitor quota
+    assert should_consume_quota("refused") is False
+
+    # 4. Provider failures: missing keys, rate limits, network outages must NOT consume quota
+    assert should_consume_quota("provider_unavailable") is False
+
+
+def test_record_live_query_prevents_double_counting():
+    """record_live_query must increment by exactly 1 per successful query and 0 for refusals/failures."""
+    # Initial count = 0
+    count, counted = record_live_query(current_count=0, status="ok")
+    assert count == 1
+    assert counted is True
+
+    # Refusal must NOT increment
+    count2, counted2 = record_live_query(current_count=count, status="refused")
+    assert count2 == 1
+    assert counted2 is False
+
+    # Provider unavailable must NOT increment
+    count3, counted3 = record_live_query(current_count=count, status="provider_unavailable")
+    assert count3 == 1
+    assert counted3 is False
+
+    # Second successful query increments to 2
+    count4, counted4 = record_live_query(current_count=count, status="ok")
+    assert count4 == 2
+    assert counted4 is True
+
+    # Double count protection: if already counted, do not increment again
+    count5, counted5 = record_live_query(current_count=count4, status="ok", already_counted=True)
+    assert count5 == 2
+    assert counted5 is False
+

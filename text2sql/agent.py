@@ -2,6 +2,7 @@
 
 import re
 import time
+from collections.abc import Callable
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -105,9 +106,19 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         self,
         custom_settings: Settings | None = None,
         llm_provider: BaseLLMProvider | None = None,
+        provider_factory: Callable[[], BaseLLMProvider] | None = None,
     ):
         self.settings = custom_settings or settings
-        self.provider = llm_provider or get_llm_provider(self.settings)
+        self._provider_instance: BaseLLMProvider | None = None
+        if llm_provider is not None:
+            if callable(llm_provider) and not isinstance(llm_provider, BaseLLMProvider):
+                self._provider_factory = llm_provider
+            else:
+                self._provider_instance = llm_provider
+                self._provider_factory = None
+        else:
+            self._provider_factory = provider_factory
+
         self.executor = SQLExecutor(
             database_url=self.settings.database_url,
             timeout_seconds=self.settings.query_timeout_seconds,
@@ -125,6 +136,18 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         )
         self.audit_logger = AuditLogger(log_path=self.settings.log_file)
 
+    @property
+    def provider(self) -> BaseLLMProvider:
+        """Resolve LLM provider lazily when first needed after deterministic safety checks."""
+        if self._provider_instance is None:
+            factory = self._provider_factory or (lambda: get_llm_provider(self.settings))
+            self._provider_instance = factory()
+        return self._provider_instance
+
+    @provider.setter
+    def provider(self, val: BaseLLMProvider | None) -> None:
+        self._provider_instance = val
+
     @staticmethod
     def _format_human_readable_provider_error(err_str: str) -> str:
         """Format a technical or raw LLM provider error into a concise, human-readable UI message."""
@@ -137,8 +160,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             return "Rate limit exceeded. Provider service is temporarily busy; please retry shortly."
         if any(p in err_lower for p in ("timeout", "timed out", "deadline_exceeded")):
             return "Provider request timed out. The model took too long to respond."
-        if any(p in err_lower for p in ("api_key", "401", "403", "authentication")):
-            return "Provider authentication failed. Please verify API key configuration."
+        if any(p in err_lower for p in ("not configured", "missing", "no language model", "unsupported", "api_key", "401", "403", "authentication")):
+            return "No language model is configured on this deployment. Use Demo Mode."
         if any(p in err_lower for p in ("400", "404", "not found", "invalid_argument", "model configuration error")):
             return "Configured model not found or invalid model configuration. Please verify model settings."
         if any(p in err_lower for p in ("connect", "unreachable", "network", "ssl")):
@@ -178,8 +201,9 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         data_write_patterns = [
             r"\b(delete\s+from|drop\s+table|truncate\s+table|alter\s+table|insert\s+into)\b",
             r"\bupdate\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?)\s+set\b",
-            r"\b(wipe|erase|clear|purge|remove|delete|truncate)\s+(all|the|every|entire|from)\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
-            r"\b(delete|drop|truncate|wipe|erase|clear|purge)\s+(table|database|schema|records|rows|data)\b",
+            r"\b(delete|truncate)\b.*?\b(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
+            r"\b(wipe|erase|clear|purge|remove)\s+(all|the|every|entire|from)\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
+            r"\b(drop|truncate|wipe|erase|clear|purge)\s+(table|database|schema|records|rows|data)\b",
             r"\b(add|insert|create)\s+(a\s+)?(new\s+)?(patient|doctor|appointment|treatment|invoice|payment)\s+(record|row|into|to)\b",
             r"\b(modify|change|update)\s+(the\s+)?(status|amount|duration|cost|reason)\s+of\s+(patient|doctor|appointment|treatment|invoice|payment)\b",
             r"^\s*(delete|drop|truncate|alter|attach|detach|grant|revoke|vacuum)\s+(from|table|database|index|schema|into|view|role|user)\b",
@@ -277,6 +301,43 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 attempts_history=attempts_history,
             )
 
+        # Pre-check passed: Resolve active LLM provider safely
+        try:
+            active_provider = self.provider
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            raw_err = str(e)
+            human_err = self._format_human_readable_provider_error(raw_err)
+            self.audit_logger.log(
+                question=question,
+                final_sql=None,
+                attempts=1,
+                status="provider_unavailable",
+                latency_ms=elapsed_ms,
+                row_count=0,
+                prompt_chars=0,
+                prompt_tokens_est=0,
+                error_message=human_err,
+                debug_error=raw_err,
+            )
+            return AgentResult(
+                question=question,
+                sql=None,
+                df=None,
+                row_count=0,
+                explanation=human_err,
+                chart_type="table-only",
+                chart_figure=None,
+                attempts=1,
+                status="provider_unavailable",
+                latency_ms=round(elapsed_ms, 2),
+                prompt_chars=0,
+                prompt_tokens_est=0,
+                error_message=human_err,
+                debug_error=raw_err,
+                attempts_history=[],
+            )
+
         error_feedback: str | None = None
         last_sql: str | None = None
         last_error: str | None = None
@@ -290,7 +351,7 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
 
             # 1. Structured LLM Generation
             try:
-                llm_response = self.provider.generate_structured(
+                llm_response = active_provider.generate_structured(
                     prompt=prompt,
                     response_model=AgentSQLResponse,
                     system_prompt=self.SYSTEM_PROMPT,

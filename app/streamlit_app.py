@@ -34,6 +34,7 @@ from app.ui_utils import (
     get_demo_response,
     get_remaining_quota,
     load_eval_summary,
+    record_live_query,
 )
 from text2sql.agent import AgentResult, Text2SQLAgent
 from text2sql.charts import auto_pick_chart_type, generate_plotly_figure
@@ -63,6 +64,8 @@ def init_session_state() -> None:
         st.session_state["live_query_count"] = 0
     if "demo_mode" not in st.session_state:
         st.session_state["demo_mode"] = False
+    if "provider_quota_exhausted" not in st.session_state:
+        st.session_state["provider_quota_exhausted"] = False
     if "active_result" not in st.session_state:
         st.session_state["active_result"] = None
     if "current_question" not in st.session_state:
@@ -83,7 +86,11 @@ def render_sidebar(agent: Text2SQLAgent, eval_summary: dict[str, Any]) -> None:
         with col_q1:
             st.metric("Live Queries Left", f"{remaining}/{MAX_LIVE_QUERIES}")
         with col_q2:
-            demo_active = st.session_state["demo_mode"] or (remaining == 0)
+            demo_active = (
+                st.session_state["demo_mode"]
+                or st.session_state["provider_quota_exhausted"]
+                or (remaining == 0)
+            )
             st.metric("Mode", "Demo" if demo_active else "Live LLM")
 
         # Demo mode toggle directly bound to session state
@@ -157,7 +164,11 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
 
     # Check if demo mode or session limit reached
     is_quota_exhausted = check_quota_limit(st.session_state["live_query_count"], MAX_LIVE_QUERIES)
-    use_demo = st.session_state["demo_mode"] or is_quota_exhausted
+    use_demo = (
+        st.session_state["demo_mode"]
+        or st.session_state.get("provider_quota_exhausted", False)
+        or is_quota_exhausted
+    )
 
     if use_demo:
         demo_resp = get_demo_response(cleaned_q)
@@ -237,9 +248,11 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
         if status == "provider_unavailable":
             err_lower = (err_msg or "").lower()
             if any(w in err_lower for w in ["quota", "perday", "429", "resource_exhausted"]):
-                st.session_state["demo_mode"] = True
+                st.session_state["provider_quota_exhausted"] = True
 
-        st.session_state["live_query_count"] += 1
+        # Failed provider calls and refusals must NOT consume live quota
+        new_count, _ = record_live_query(st.session_state["live_query_count"], status)
+        st.session_state["live_query_count"] = new_count
 
         record = agent_result_to_record(agent_res, elapsed_ms)
         st.session_state["active_result"] = record
