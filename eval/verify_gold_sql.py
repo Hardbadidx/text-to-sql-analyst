@@ -45,7 +45,34 @@ def verify_gold_queries(yaml_path: str = "eval/questions.yaml") -> bool:
         qid = q["id"]
         difficulty = q.get("difficulty", "unknown")
         category = q.get("category", "unknown")
-        gold_sql = q["gold_sql"]
+        gold_sql = q.get("gold_sql")
+        expected_outcome = q.get("expected_outcome")
+
+        # Handle expected refusals (e.g., questions querying denylisted PII columns)
+        if expected_outcome == "refused" and gold_sql is None:
+            table_data.append([
+                qid,
+                difficulty,
+                category,
+                "PASS (Expected Refusal)",
+                0,
+                q.get("refusal_reason", "Expected policy refusal")[:60],
+                "(none - policy refusal)",
+            ])
+            continue
+
+        if not gold_sql:
+            all_passed = False
+            table_data.append([
+                qid,
+                difficulty,
+                category,
+                "FAIL (Missing SQL)",
+                0,
+                "Question missing gold SQL",
+                "(none)",
+            ])
+            continue
 
         # 1. AST Validation
         val_result = validator.validate(gold_sql)
@@ -98,7 +125,7 @@ def verify_gold_queries(yaml_path: str = "eval/questions.yaml") -> bool:
     headers = ["ID", "Difficulty", "Category", "Status", "Rows", "First Row Preview", "SQL (Truncated)"]
     print(tabulate(table_data, headers=headers, tablefmt="github"))
 
-    pass_count = sum(1 for row in table_data if row[3] == "PASS")
+    pass_count = sum(1 for row in table_data if "PASS" in row[3])
     print(f"\nVerification Summary: {pass_count}/{total_queries} queries PASSED.")
 
     if not all_passed:

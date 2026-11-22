@@ -173,26 +173,28 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             if re.search(pat, q_lower):
                 return "Request refused: Prompt injection, system override, or destructive command detected."
 
-        # 2. Write / DDL / Destructive operations
-        write_patterns = [
-            r"^\s*(delete|drop|insert|update|alter|truncate|create|attach|detach|grant|revoke|vacuum|wipe|erase|clear|purge|remove)\b",
-            r"\b(wipe|erase|clear|purge|remove|delete|truncate)\s+(all|the|every|from|our|entire)\b",
-            r"\b(delete|drop|insert|update|alter|truncate|wipe|erase|clear|purge)\s+(table|database|schema|records|rows|data)\b",
-            r"\b(add|insert|create)\s+(a\s+)?(new\s+)?(patient|doctor|appointment|treatment|invoice|payment|record|row)\b",
-            r"\b(modify|change|update)\s+(the\s+)?(patient|doctor|appointment|treatment|invoice|payment|status|duration|reason)\b",
+        # 2. Write / DDL / Destructive operations targeting data or schema
+        # Refuses ONLY when targeting data/tables/records/schema, NOT benign conversational verbs
+        data_write_patterns = [
+            r"\b(delete\s+from|drop\s+table|truncate\s+table|alter\s+table|insert\s+into)\b",
+            r"\bupdate\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?)\s+set\b",
+            r"\b(wipe|erase|clear|purge|remove|delete|truncate)\s+(all|the|every|entire|from)\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
+            r"\b(delete|drop|truncate|wipe|erase|clear|purge)\s+(table|database|schema|records|rows|data)\b",
+            r"\b(add|insert|create)\s+(a\s+)?(new\s+)?(patient|doctor|appointment|treatment|invoice|payment)\s+(record|row|into|to)\b",
+            r"\b(modify|change|update)\s+(the\s+)?(status|amount|duration|cost|reason)\s+of\s+(patient|doctor|appointment|treatment|invoice|payment)\b",
+            r"^\s*(delete|drop|truncate|alter|attach|detach|grant|revoke|vacuum)\s+(from|table|database|index|schema|into|view|role|user)\b",
         ]
-        for pat in write_patterns:
+        for pat in data_write_patterns:
             if re.search(pat, q_lower):
                 return "Request refused: Write, modification, or DDL operations are not permitted on this read-only database."
 
-        # 3. Denylisted PII columns request
-        pii_patterns = [
-            r"\b(phone\s*numbers?|telephone|cell\s*phone)\b",
-            r"\b(email\s*address(es)?|emails?)\b",
-            r"\b(home\s*address(es)?|street\s*address|residential\s*address)\b",
-            r"\b(ssn|social\s*security)\b",
+        # 3. Direct exfiltration requests demanding raw sensitive contact PII lists
+        # (Does NOT refuse aggregate mentions of 'email' or 'phone'; relies on validator denylist)
+        exfil_patterns = [
+            r"\b(give\s+me|show\s+me|list|export|dump)\s+(the\s+|all\s+)?(phone\s*numbers?|telephone|cell\s*phone|email\s*addresses?|home\s*address(es)?|residential\s*address|ssn|social\s*security)\b",
+            r"^\s*select\s+.*(phone|email|address|ssn)\s+from\s+patients\b",
         ]
-        for pat in pii_patterns:
+        for pat in exfil_patterns:
             if re.search(pat, q_lower):
                 return "Request refused: Contact information and PII (phone, email, address, ssn) are restricted by the safety policy."
 

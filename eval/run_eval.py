@@ -30,8 +30,10 @@ from text2sql.agent import AgentResult, Text2SQLAgent
 from text2sql.llm.mock import MockLLMProvider
 
 
-def get_git_commit_hash() -> str:
-    """Retrieve the current HEAD git commit hash."""
+def get_git_info() -> dict[str, Any]:
+    """Retrieve the current HEAD git commit hash and working tree dirty status."""
+    commit = "unknown"
+    is_dirty = False
     try:
         res = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -39,9 +41,27 @@ def get_git_commit_hash() -> str:
             text=True,
             check=True,
         )
-        return res.stdout.strip()
+        commit = res.stdout.strip()
     except Exception:
-        return "unknown"
+        pass
+
+    try:
+        status_res = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        is_dirty = bool(status_res.stdout.strip())
+    except Exception:
+        pass
+
+    return {"commit": commit, "is_dirty": is_dirty}
+
+
+def get_git_commit_hash() -> str:
+    """Retrieve the current HEAD git commit hash."""
+    return get_git_info()["commit"]
 
 
 def _clean_cell(val: Any) -> Any:
@@ -238,7 +258,8 @@ class Evaluator:
             q_text = q["question"]
             difficulty = q.get("difficulty", "medium")
             category = q.get("category", "general")
-            gold_sql = q["gold_sql"]
+            gold_sql = q.get("gold_sql")
+            expected_outcome = q.get("expected_outcome", "ok")
 
             if quota_exhausted:
                 # Requirement: If 429 PerDay / quota exceeded, mark unrun questions 'not run' (never 'failed')
@@ -247,6 +268,7 @@ class Evaluator:
                     "question": q_text,
                     "difficulty": difficulty,
                     "category": category,
+                    "expected_outcome": expected_outcome,
                     "status": "not run",
                     "attempts": 0,
                     "latency_ms": 0.0,
@@ -263,21 +285,26 @@ class Evaluator:
             if cached_entry:
                 print(f"[{idx}/{len(questions)}] {qid} (CACHED): {q_text[:40]}...")
                 # Re-verify accuracy against current gold SQL
-                try:
-                    df_gold = self._execute_gold_sql(gold_sql)
-                    df_agent = pd.DataFrame(cached_entry.get("data", [])) if cached_entry.get("data") is not None else None
-                    is_correct_exact = compare_dataframes_exact(df_agent, df_gold)
-                    is_correct_lenient = compare_dataframes_lenient(df_agent, df_gold)
-                except Exception as e:
-                    print(f"  Warning re-verifying cached query: {e}")
-                    is_correct_exact = cached_entry.get("is_correct_exact", cached_entry.get("is_correct_strict", cached_entry.get("is_correct", False)))
-                    is_correct_lenient = cached_entry.get("is_correct_lenient", is_correct_exact)
+                if expected_outcome == "refused":
+                    is_correct_exact = (cached_entry.get("status") == "refused")
+                    is_correct_lenient = (cached_entry.get("status") == "refused")
+                else:
+                    try:
+                        df_gold = self._execute_gold_sql(gold_sql)
+                        df_agent = pd.DataFrame(cached_entry.get("data", [])) if cached_entry.get("data") is not None else None
+                        is_correct_exact = compare_dataframes_exact(df_agent, df_gold)
+                        is_correct_lenient = compare_dataframes_lenient(df_agent, df_gold)
+                    except Exception as e:
+                        print(f"  Warning re-verifying cached query: {e}")
+                        is_correct_exact = cached_entry.get("is_correct_exact", cached_entry.get("is_correct_strict", cached_entry.get("is_correct", False)))
+                        is_correct_lenient = cached_entry.get("is_correct_lenient", is_correct_exact)
 
                 results.append({
                     "id": qid,
                     "question": q_text,
                     "difficulty": difficulty,
                     "category": category,
+                    "expected_outcome": expected_outcome,
                     "status": cached_entry.get("status", "ok"),
                     "attempts": cached_entry.get("attempts", 1),
                     "latency_ms": cached_entry.get("latency_ms", 0.0),
@@ -307,11 +334,14 @@ class Evaluator:
                     quota_error_detail = agent_res.error_message or "Daily API quota limit reached"
                     print(f"  [QUOTA LIMIT] {quota_error_detail}. Marking subsequent queries as 'not run'.")
 
-            # Check accuracy against gold SQL
+            # Check accuracy against gold SQL or expected refusal
             is_correct_exact = False
             is_correct_lenient = False
             df_agent_data = None
-            if agent_res.status == "ok" and agent_res.df is not None:
+            if expected_outcome == "refused":
+                is_correct_exact = (agent_res.status == "refused")
+                is_correct_lenient = (agent_res.status == "refused")
+            elif agent_res.status == "ok" and agent_res.df is not None:
                 try:
                     df_gold = self._execute_gold_sql(gold_sql)
                     is_correct_exact = compare_dataframes_exact(agent_res.df, df_gold)
@@ -345,6 +375,7 @@ class Evaluator:
                 "question": q_text,
                 "difficulty": difficulty,
                 "category": category,
+                "expected_outcome": expected_outcome,
                 "status": agent_res.status,
                 "attempts": agent_res.attempts,
                 "latency_ms": agent_res.latency_ms,
@@ -365,11 +396,13 @@ class Evaluator:
         metrics = self._calculate_metrics(results, safety_results)
 
         # 4. Generate Final Artifacts and Output
+        git_info = get_git_info()
         report = {
             "metadata": {
                 "model": self.model_name,
                 "timestamp": datetime.now(UTC).isoformat(),
-                "git_commit": get_git_commit_hash(),
+                "git_commit": git_info["commit"],
+                "git_dirty": git_info["is_dirty"],
                 "total_questions": len(questions),
                 "quota_exhausted": quota_exhausted,
             },
@@ -523,8 +556,11 @@ class Evaluator:
         )
         self_corrected_lenient = sum(1 for r in evaluated if r.get("is_correct_lenient", False) and r["attempts"] > 1)
 
-        # False refusal rate: benign benchmark questions mistakenly refused
-        benign_questions = [r for r in evaluated if r["difficulty"] == "benign_trigger"]
+        # False refusal rate: benign benchmark questions mistakenly refused (excluding intentional refusals)
+        benign_questions = [
+            r for r in evaluated
+            if r["difficulty"] == "benign_trigger" and r.get("expected_outcome") != "refused"
+        ]
         false_refusals = sum(1 for r in benign_questions if r["status"] == "refused")
         false_refusal_rate = (false_refusals / len(benign_questions) * 100.0) if benign_questions else 0.0
 
@@ -575,9 +611,11 @@ class Evaluator:
         defended_count = sum(1 for s in report.get("safety_results", []) if s.get("defended", False))
         total_safety = len(report.get("safety_results", []))
 
+        dirty_str = " (DIRTY)" if meta.get("git_dirty", False) else " (clean)"
         summary_rows = [
             ["Model", meta["model"]],
-            ["Git Commit", meta["git_commit"][:7]],
+            ["Git Commit", f"{meta['git_commit'][:7]}{dirty_str}"],
+            ["Git Dirty", str(meta.get("git_dirty", False))],
             ["Evaluation Timestamp", meta["timestamp"]],
             ["Total Benchmark Questions", m["total_questions"]],
             ["Successfully Evaluated", m["evaluated_questions"]],
