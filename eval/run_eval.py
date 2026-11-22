@@ -44,43 +44,71 @@ def get_git_commit_hash() -> str:
         return "unknown"
 
 
-def compare_dataframes(df_agent: pd.DataFrame | None, df_gold: pd.DataFrame | None) -> bool:
-    """Compare agent result DataFrame against gold result DataFrame.
-
-    Order-insensitive, rounds floats to 2 decimals, agnostic to column aliases.
-    """
-    if df_agent is None or df_gold is None:
-        return False
-    if df_agent.shape != df_gold.shape:
-        return False
-    if df_agent.empty and df_gold.empty:
-        return True
-
-    a = df_agent.copy()
-    b = df_gold.copy()
-    a.columns = list(range(len(a.columns)))
-    b.columns = list(range(len(b.columns)))
-
-    for col in a.columns:
-        if pd.api.types.is_numeric_dtype(a[col]):
-            a[col] = a[col].round(2)
-        else:
-            a[col] = a[col].astype(str).str.strip().str.lower()
-
-    for col in b.columns:
-        if pd.api.types.is_numeric_dtype(b[col]):
-            b[col] = b[col].round(2)
-        else:
-            b[col] = b[col].astype(str).str.strip().str.lower()
-
+def _clean_cell(val: Any) -> Any:
+    """Normalize a single DataFrame cell: round floats to 2 decimals, map null/nan/none to None, case-fold strings."""
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, (float, int)):
+        return round(float(val), 2)
+    val_str = str(val).strip().lower()
+    if val_str in ("none", "nan", "<na>", "null", ""):
+        return None
     try:
-        a_sorted = a.sort_values(by=list(a.columns)).reset_index(drop=True)
-        b_sorted = b.sort_values(by=list(b.columns)).reset_index(drop=True)
-    except Exception:
-        a_sorted = a.reset_index(drop=True)
-        b_sorted = b.reset_index(drop=True)
+        return round(float(val_str), 2)
+    except (ValueError, TypeError):
+        return val_str
 
-    return a_sorted.equals(b_sorted)
+
+def _df_to_canonical_rows(df: pd.DataFrame) -> list[tuple]:
+    """Convert dataframe rows to a sorted multiset of canonical tuples for order-insensitive matching."""
+    rows = []
+    for r in df.itertuples(index=False, name=None):
+        cleaned_row = tuple(_clean_cell(v) for v in r)
+        rows.append(cleaned_row)
+    return sorted(rows, key=lambda r: tuple("" if x is None else str(x) for x in r))
+
+
+def compare_dataframes_strict(df_pred: pd.DataFrame | None, df_gold: pd.DataFrame | None) -> bool:
+    """Strict comparator: exact result match (same dimensions, order-insensitive across rows,
+    floats compared at 2 decimals, NULL/NaN equal to NULL/NaN).
+    """
+    if df_pred is None or df_gold is None:
+        return False
+    if df_pred.shape != df_gold.shape:
+        return False
+    if df_pred.empty and df_gold.empty:
+        return True
+    return _df_to_canonical_rows(df_pred) == _df_to_canonical_rows(df_gold)
+
+
+def compare_dataframes_lenient(df_pred: pd.DataFrame | None, df_gold: pd.DataFrame | None) -> bool:
+    """Lenient comparator: every gold column appears in predicted result (allows extra columns or reordered columns,
+    order-insensitive across rows, floats compared at 2 decimals, NULL/NaN equal to NULL/NaN).
+    """
+    import itertools
+
+    if df_pred is None or df_gold is None:
+        return False
+    if df_pred.empty and df_gold.empty:
+        return True
+    if len(df_pred) != len(df_gold) or len(df_pred.columns) < len(df_gold.columns):
+        return False
+
+    gold_rows = _df_to_canonical_rows(df_gold)
+    num_gold = len(df_gold.columns)
+
+    # Check if any permutation subset of predicted columns matches the gold rows
+    for col_combo in itertools.combinations(df_pred.columns, num_gold):
+        for perm in itertools.permutations(col_combo):
+            sub_p = df_pred[list(perm)]
+            if _df_to_canonical_rows(sub_p) == gold_rows:
+                return True
+    return False
+
+
+def compare_dataframes(df_agent: pd.DataFrame | None, df_gold: pd.DataFrame | None) -> bool:
+    """Default comparator alias pointing to compare_dataframes_strict."""
+    return compare_dataframes_strict(df_agent, df_gold)
 
 
 class EvalCache:
@@ -224,10 +252,12 @@ class Evaluator:
                 try:
                     df_gold = self._execute_gold_sql(gold_sql)
                     df_agent = pd.DataFrame(cached_entry.get("data", [])) if cached_entry.get("data") is not None else None
-                    is_correct = compare_dataframes(df_agent, df_gold)
+                    is_correct_strict = compare_dataframes_strict(df_agent, df_gold)
+                    is_correct_lenient = compare_dataframes_lenient(df_agent, df_gold)
                 except Exception as e:
                     print(f"  Warning re-verifying cached query: {e}")
-                    is_correct = cached_entry.get("is_correct", False)
+                    is_correct_strict = cached_entry.get("is_correct_strict", cached_entry.get("is_correct", False))
+                    is_correct_lenient = cached_entry.get("is_correct_lenient", is_correct_strict)
 
                 results.append({
                     "id": qid,
@@ -237,7 +267,9 @@ class Evaluator:
                     "status": cached_entry.get("status", "ok"),
                     "attempts": cached_entry.get("attempts", 1),
                     "latency_ms": cached_entry.get("latency_ms", 0.0),
-                    "is_correct": is_correct,
+                    "is_correct": is_correct_strict,
+                    "is_correct_strict": is_correct_strict,
+                    "is_correct_lenient": is_correct_lenient,
                     "cached": True,
                     "sql": cached_entry.get("sql"),
                     "gold_sql": gold_sql,
@@ -261,12 +293,14 @@ class Evaluator:
                     print(f"  [QUOTA LIMIT] {quota_error_detail}. Marking subsequent queries as 'not run'.")
 
             # Check accuracy against gold SQL
-            is_correct = False
+            is_correct_strict = False
+            is_correct_lenient = False
             df_agent_data = None
             if agent_res.status == "ok" and agent_res.df is not None:
                 try:
                     df_gold = self._execute_gold_sql(gold_sql)
-                    is_correct = compare_dataframes(agent_res.df, df_gold)
+                    is_correct_strict = compare_dataframes_strict(agent_res.df, df_gold)
+                    is_correct_lenient = compare_dataframes_lenient(agent_res.df, df_gold)
                     # Limit serialized rows in cache to first 100 rows for storage hygiene
                     df_agent_data = agent_res.df.head(100).to_dict(orient="records")
                 except Exception as e:
@@ -282,7 +316,9 @@ class Evaluator:
                         "attempts": agent_res.attempts,
                         "latency_ms": agent_res.latency_ms,
                         "sql": agent_res.sql,
-                        "is_correct": is_correct,
+                        "is_correct": is_correct_strict,
+                        "is_correct_strict": is_correct_strict,
+                        "is_correct_lenient": is_correct_lenient,
                         "error_message": agent_res.error_message,
                         "data": df_agent_data,
                     },
@@ -296,7 +332,9 @@ class Evaluator:
                 "status": agent_res.status,
                 "attempts": agent_res.attempts,
                 "latency_ms": agent_res.latency_ms,
-                "is_correct": is_correct,
+                "is_correct": is_correct_strict,
+                "is_correct_strict": is_correct_strict,
+                "is_correct_lenient": is_correct_lenient,
                 "cached": False,
                 "sql": agent_res.sql,
                 "gold_sql": gold_sql,
@@ -386,30 +424,39 @@ class Evaluator:
         results: list[dict[str, Any]],
         safety_results: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Compute evaluation metrics per recruiter-ready specifications."""
+        """Compute evaluation metrics for both strict and lenient execution accuracy."""
         evaluated = [r for r in results if r["status"] not in ("not run", "provider_unavailable")]
         total_eval = len(evaluated)
         provider_unavailable_count = sum(1 for r in results if r["status"] == "provider_unavailable")
         not_run_count = sum(1 for r in results if r["status"] == "not run")
 
-        correct_count = sum(1 for r in evaluated if r["is_correct"])
-        overall_accuracy = (correct_count / total_eval * 100.0) if total_eval > 0 else 0.0
+        strict_correct_count = sum(1 for r in evaluated if r.get("is_correct_strict", False))
+        lenient_correct_count = sum(1 for r in evaluated if r.get("is_correct_lenient", False))
+
+        overall_strict_accuracy = (strict_correct_count / total_eval * 100.0) if total_eval > 0 else 0.0
+        overall_lenient_accuracy = (lenient_correct_count / total_eval * 100.0) if total_eval > 0 else 0.0
 
         # By difficulty
         by_difficulty: dict[str, dict[str, Any]] = {}
         for diff in ("easy", "medium", "hard", "benign_trigger"):
             diff_eval = [r for r in evaluated if r["difficulty"] == diff]
-            diff_corr = sum(1 for r in diff_eval if r["is_correct"])
-            diff_acc = (diff_corr / len(diff_eval) * 100.0) if diff_eval else 0.0
+            diff_strict = sum(1 for r in diff_eval if r.get("is_correct_strict", False))
+            diff_lenient = sum(1 for r in diff_eval if r.get("is_correct_lenient", False))
+            strict_acc = (diff_strict / len(diff_eval) * 100.0) if diff_eval else 0.0
+            lenient_acc = (diff_lenient / len(diff_eval) * 100.0) if diff_eval else 0.0
             by_difficulty[diff] = {
                 "total": len(diff_eval),
-                "correct": diff_corr,
-                "accuracy_pct": round(diff_acc, 2),
+                "strict_correct": diff_strict,
+                "strict_accuracy_pct": round(strict_acc, 2),
+                "lenient_correct": diff_lenient,
+                "lenient_accuracy_pct": round(lenient_acc, 2),
             }
 
         # First attempt vs self-corrected
-        first_attempt_correct = sum(1 for r in evaluated if r["is_correct"] and r["attempts"] == 1)
-        self_corrected_correct = sum(1 for r in evaluated if r["is_correct"] and r["attempts"] > 1)
+        first_attempt_strict = sum(1 for r in evaluated if r.get("is_correct_strict", False) and r["attempts"] == 1)
+        first_attempt_lenient = sum(1 for r in evaluated if r.get("is_correct_lenient", False) and r["attempts"] == 1)
+        self_corrected_strict = sum(1 for r in evaluated if r.get("is_correct_strict", False) and r["attempts"] > 1)
+        self_corrected_lenient = sum(1 for r in evaluated if r.get("is_correct_lenient", False) and r["attempts"] > 1)
 
         # False refusal rate: benign benchmark questions mistakenly refused
         benign_questions = [r for r in evaluated if r["difficulty"] == "benign_trigger"]
@@ -429,10 +476,14 @@ class Evaluator:
             "evaluated_questions": total_eval,
             "provider_unavailable_count": provider_unavailable_count,
             "not_run_count": not_run_count,
-            "overall_accuracy_pct": round(overall_accuracy, 2),
+            "overall_strict_accuracy_pct": round(overall_strict_accuracy, 2),
+            "overall_lenient_accuracy_pct": round(overall_lenient_accuracy, 2),
+            "overall_accuracy_pct": round(overall_strict_accuracy, 2),  # Default alias to strict
             "by_difficulty": by_difficulty,
-            "first_attempt_correct": first_attempt_correct,
-            "self_corrected_correct": self_corrected_correct,
+            "first_attempt_strict_correct": first_attempt_strict,
+            "first_attempt_lenient_correct": first_attempt_lenient,
+            "self_corrected_strict_correct": self_corrected_strict,
+            "self_corrected_lenient_correct": self_corrected_lenient,
             "false_refusal_rate_pct": round(false_refusal_rate, 2),
             "safety_block_rate_pct": round(safety_block_rate, 2),
             "mean_latency_ms": round(mean_latency, 2),
@@ -451,13 +502,14 @@ class Evaluator:
             ["Successfully Evaluated", m["evaluated_questions"]],
             ["Provider Unavailable (429/Quota/Down)", m["provider_unavailable_count"]],
             ["Unrun (Halted Cleanly)", m["not_run_count"]],
-            ["Overall Accuracy", f"{m['overall_accuracy_pct']}%"],
-            ["- Easy Accuracy", f"{m['by_difficulty']['easy']['accuracy_pct']}% ({m['by_difficulty']['easy']['correct']}/{m['by_difficulty']['easy']['total']})"],
-            ["- Medium Accuracy", f"{m['by_difficulty']['medium']['accuracy_pct']}% ({m['by_difficulty']['medium']['correct']}/{m['by_difficulty']['medium']['total']})"],
-            ["- Hard Accuracy", f"{m['by_difficulty']['hard']['accuracy_pct']}% ({m['by_difficulty']['hard']['correct']}/{m['by_difficulty']['hard']['total']})"],
-            ["- Benign Trigger Words Accuracy", f"{m['by_difficulty']['benign_trigger']['accuracy_pct']}% ({m['by_difficulty']['benign_trigger']['correct']}/{m['by_difficulty']['benign_trigger']['total']})"],
-            ["First Attempt Correct", m["first_attempt_correct"]],
-            ["Self-Corrected Correct", m["self_corrected_correct"]],
+            ["Strict Overall Accuracy", f"{m['overall_strict_accuracy_pct']}%"],
+            ["Lenient Overall Accuracy", f"{m['overall_lenient_accuracy_pct']}%"],
+            ["- Easy (Strict / Lenient)", f"{m['by_difficulty']['easy']['strict_accuracy_pct']}% / {m['by_difficulty']['easy']['lenient_accuracy_pct']}% ({m['by_difficulty']['easy']['strict_correct']}/{m['by_difficulty']['easy']['total']})"],
+            ["- Medium (Strict / Lenient)", f"{m['by_difficulty']['medium']['strict_accuracy_pct']}% / {m['by_difficulty']['medium']['lenient_accuracy_pct']}% ({m['by_difficulty']['medium']['strict_correct']}/{m['by_difficulty']['medium']['total']})"],
+            ["- Hard (Strict / Lenient)", f"{m['by_difficulty']['hard']['strict_accuracy_pct']}% / {m['by_difficulty']['hard']['lenient_accuracy_pct']}% ({m['by_difficulty']['hard']['strict_correct']}/{m['by_difficulty']['hard']['total']})"],
+            ["- Benign Trigger Words", f"{m['by_difficulty']['benign_trigger']['strict_accuracy_pct']}% / {m['by_difficulty']['benign_trigger']['lenient_accuracy_pct']}% ({m['by_difficulty']['benign_trigger']['strict_correct']}/{m['by_difficulty']['benign_trigger']['total']})"],
+            ["1st Attempt Correct (Strict / Lenient)", f"{m['first_attempt_strict_correct']} / {m['first_attempt_lenient_correct']}"],
+            ["Self-Corrected (Strict / Lenient)", f"{m['self_corrected_strict_correct']} / {m['self_corrected_lenient_correct']}"],
             ["False Refusal Rate", f"{m['false_refusal_rate_pct']}%"],
             ["Safety Block Rate", f"{m['safety_block_rate_pct']}%"],
             ["Mean Live Latency", f"{m['mean_latency_ms']} ms"],

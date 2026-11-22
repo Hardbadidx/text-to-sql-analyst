@@ -665,3 +665,63 @@ def test_allowed_binary_predicate_operators_and_collate_pass(validator):
     for q in allowed:
         res = validator.validate(q)
         assert res.is_valid, f"Expected valid query to pass, got error: {res.error_message}. Query: {q}"
+
+
+# --- Regression Tests: Projected Alias Security Verification ---
+
+
+def test_adversarial_denylisted_columns_via_aliases_and_ctes_still_blocked(validator):
+    """Aliasing denylisted columns in SELECT, subqueries, or CTEs must still be caught and blocked."""
+    adversarial_queries = [
+        # Direct alias of denylisted column
+        "SELECT phone AS contact_num FROM patients",
+        "SELECT email AS electronic_mail FROM patients",
+        "SELECT address AS home_location FROM patients",
+        "SELECT ssn AS tax_id FROM patients",
+        # Subquery attempting to alias denylisted column
+        "SELECT p FROM (SELECT phone AS p FROM patients)",
+        "SELECT sub.e FROM (SELECT id, email AS e FROM patients) sub",
+        # CTE attempting to alias denylisted column
+        "WITH secret_cte AS (SELECT id, phone AS p FROM patients) SELECT p FROM secret_cte",
+        "WITH p_cte AS (SELECT id, ssn AS s FROM patients) SELECT a.id FROM appointments a JOIN p_cte ON a.patient_id = p_cte.id",
+        # Subquery filtering on denylisted column via alias
+        "SELECT id FROM patients WHERE id IN (SELECT id FROM patients WHERE phone = '555-1234')",
+        # Quoted / bracketed alias of denylisted column
+        "SELECT [phone] AS safe_contact FROM patients",
+        'SELECT "email" AS user_email FROM patients',
+    ]
+    for q in adversarial_queries:
+        res = validator.validate(q)
+        assert not res.is_valid, f"Adversarial query should have been blocked: {q}"
+        assert "sensitive denylisted column" in res.error_message.lower() or "forbidden" in res.error_message.lower()
+
+
+def test_adversarial_sqlite_master_and_star_expansion_still_blocked(validator):
+    """System tables (sqlite_master) and star expansion on sensitive tables must remain strictly blocked."""
+    # Direct access to system catalogs
+    res_master = validator.validate("SELECT * FROM sqlite_master")
+    assert not res_master.is_valid
+    assert "system or table-valued" in res_master.error_message.lower()
+
+    res_schema = validator.validate("SELECT sql FROM sqlite_schema")
+    assert not res_schema.is_valid
+    assert "system or table-valued" in res_schema.error_message.lower()
+
+    # Subquery wrapping system catalog
+    res_sub_master = validator.validate("SELECT * FROM (SELECT * FROM sqlite_master) m")
+    assert not res_sub_master.is_valid
+
+    # Star expansion on table with denylisted columns inside CTE must expand safely (never exposing phone/email/address/ssn)
+    res_cte_star = validator.validate("WITH safe_p AS (SELECT * FROM patients) SELECT * FROM safe_p")
+    assert res_cte_star.is_valid
+    # The expanded SQL must NOT contain phone, email, address, or ssn
+    sql_upper = res_cte_star.sanitized_sql.upper()
+    assert "PHONE" not in sql_upper
+    assert "EMAIL" not in sql_upper
+    assert "ADDRESS" not in sql_upper
+    assert "SSN" not in sql_upper
+
+    # Reject star when reject_stars_on_sensitive is True
+    res_rejected = validator.validate("SELECT * FROM patients", reject_stars_on_sensitive=True)
+    assert not res_rejected.is_valid
+    assert "contain sensitive columns" in res_rejected.error_message.lower()

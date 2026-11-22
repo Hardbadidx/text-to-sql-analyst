@@ -3,10 +3,65 @@
 import pandas as pd
 import pytest
 
-from eval.run_eval import EvalCache, Evaluator, RateLimiter, compare_dataframes, get_git_commit_hash
+from eval.run_eval import (
+    EvalCache,
+    Evaluator,
+    RateLimiter,
+    compare_dataframes,
+    compare_dataframes_lenient,
+    compare_dataframes_strict,
+    get_git_commit_hash,
+)
 from text2sql.agent import Text2SQLAgent
 from text2sql.llm.base import ProviderUnavailableError
 from text2sql.llm.mock import MockLLMProvider
+
+
+def test_comparator_extra_columns():
+    """Predicted DataFrame with extra columns must fail strict comparator but pass lenient comparator."""
+    df_gold = pd.DataFrame({"id": [1, 2], "val": [10.5, 20.3]})
+    df_pred_extra = pd.DataFrame({"id": [1, 2], "val": [10.5, 20.3], "extra_metric": ["x", "y"]})
+
+    assert not compare_dataframes_strict(df_pred_extra, df_gold)
+    assert compare_dataframes_lenient(df_pred_extra, df_gold)
+
+
+def test_comparator_column_order():
+    """Predicted DataFrame with permuted column order must fail strict comparator but pass lenient comparator."""
+    df_gold = pd.DataFrame({"id": [1, 2], "val": [10.5, 20.3]})
+    df_pred_reordered = pd.DataFrame({"val": [10.5, 20.3], "id": [1, 2]})
+
+    assert not compare_dataframes_strict(df_pred_reordered, df_gold)
+    assert compare_dataframes_lenient(df_pred_reordered, df_gold)
+
+
+def test_comparator_nan_rows():
+    """NULL/None/NaN in predicted and gold must be treated as equal in both strict and lenient comparators."""
+    import numpy as np
+
+    df_gold = pd.DataFrame({"id": [1, 2], "val": [np.nan, 20.0]})
+    df_pred = pd.DataFrame({"id": [1, 2], "val": [None, 20.0]})
+
+    assert compare_dataframes_strict(df_pred, df_gold)
+    assert compare_dataframes_lenient(df_pred, df_gold)
+
+
+def test_comparator_float_rounding():
+    """Floats differing beyond 2 decimal places must match in both strict and lenient comparators."""
+    df_gold = pd.DataFrame({"val": [12.35]})
+    df_pred = pd.DataFrame({"val": [12.3456]})
+
+    assert compare_dataframes_strict(df_pred, df_gold)
+    assert compare_dataframes_lenient(df_pred, df_gold)
+
+
+def test_comparator_ties():
+    """Tied identical rows must match with duplicate counts preserved in both strict and lenient comparators."""
+    df_gold = pd.DataFrame({"specialty": ["Cardiology", "Cardiology"], "cnt": [5, 5]})
+    df_pred = pd.DataFrame({"specialty": ["Cardiology", "Cardiology"], "cnt": [5, 5]})
+
+    assert compare_dataframes_strict(df_pred, df_gold)
+    assert compare_dataframes_lenient(df_pred, df_gold)
 
 
 def test_compare_dataframes_order_insensitive_and_aliases():

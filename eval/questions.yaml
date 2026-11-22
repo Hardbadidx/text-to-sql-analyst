@@ -99,175 +99,175 @@
 - id: q16
   difficulty: medium
   category: aggregation
-  question: "How many doctors are there in each specialty, ordered from most to least?"
+  question: "How many doctors are there in each specialty, ordered from most to least, then by specialty alphabetically?"
   gold_sql: "SELECT specialty, COUNT(*) AS doctor_count FROM doctors GROUP BY specialty ORDER BY doctor_count DESC, specialty ASC"
 
 - id: q17
   difficulty: medium
   category: revenue_collected
-  question: "What is the total collected revenue by payment method?"
+  question: "What is the total collected revenue by payment method, ordered from highest to lowest?"
   gold_sql: "SELECT payment_method, ROUND(SUM(amount), 2) AS total_collected FROM payments GROUP BY payment_method ORDER BY total_collected DESC"
 
 - id: q18
   difficulty: medium
   category: join
-  question: "List the top 5 doctors with the highest number of completed appointments."
-  gold_sql: "SELECT d.first_name, d.last_name, COUNT(a.id) AS completed_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id WHERE a.status = 'completed' GROUP BY d.id, d.first_name, d.last_name ORDER BY completed_count DESC LIMIT 5"
+  question: "List the top 5 doctors with the highest number of completed appointments, breaking any ties by doctor last name ascending, then first name ascending."
+  gold_sql: "SELECT d.first_name, d.last_name, COUNT(a.id) AS completed_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id WHERE a.status = 'completed' GROUP BY d.id, d.first_name, d.last_name ORDER BY completed_count DESC, d.last_name ASC, d.first_name ASC LIMIT 5"
 
 - id: q19
   difficulty: medium
   category: revenue_invoiced
-  question: "What is the total invoiced amount for each invoice status?"
+  question: "What is the total invoiced amount for each invoice status, ordered from highest to lowest?"
   gold_sql: "SELECT status, ROUND(SUM(amount), 2) AS total_invoiced FROM invoices GROUP BY status ORDER BY total_invoiced DESC"
 
 - id: q20
   difficulty: medium
   category: join
-  question: "How many appointments were completed by each specialty in 2024?"
+  question: "How many appointments were completed by each specialty in 2024, ordered from highest to lowest?"
   gold_sql: "SELECT d.specialty, COUNT(a.id) AS appointment_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id WHERE a.status = 'completed' AND a.scheduled_at >= '2024-01-01' AND a.scheduled_at < '2025-01-01' GROUP BY d.specialty ORDER BY appointment_count DESC"
 
 - id: q21
   difficulty: medium
   category: date_window
-  question: "What is the monthly invoiced revenue for each month in 2024?"
+  question: "What is the monthly invoiced revenue for each month in 2024, ordered by month ascending?"
   gold_sql: "SELECT strftime('%Y-%m', issued_at) AS month, ROUND(SUM(amount), 2) AS monthly_invoiced FROM invoices WHERE issued_at >= '2024-01-01' AND issued_at < '2025-01-01' GROUP BY month ORDER BY month ASC"
 
 - id: q22
   difficulty: medium
   category: join
-  question: "What is the total treatment cost per specialty?"
+  question: "What is the total treatment cost per specialty, ordered from highest to lowest?"
   gold_sql: "SELECT d.specialty, ROUND(SUM(t.cost), 2) AS total_treatment_cost FROM treatments t JOIN appointments a ON t.appointment_id = a.id JOIN doctors d ON a.doctor_id = d.id GROUP BY d.specialty ORDER BY total_treatment_cost DESC"
 
 - id: q23
   difficulty: medium
   category: aggregation
-  question: "Find the 5 most common appointment reasons."
+  question: "Find the 5 most common appointment reasons, breaking any ties by reason alphabetically."
   gold_sql: "SELECT reason, COUNT(*) AS appointment_count FROM appointments GROUP BY reason ORDER BY appointment_count DESC, reason ASC LIMIT 5"
 
 - id: q24
   difficulty: medium
   category: date_window
-  question: "How many patients were registered in each year?"
+  question: "How many patients were registered in each year, ordered by registration year ascending?"
   gold_sql: "SELECT strftime('%Y', created_at) AS registration_year, COUNT(*) AS patient_count FROM patients GROUP BY registration_year ORDER BY registration_year ASC"
 
 - id: q25
   difficulty: medium
   category: basic_filter
-  question: "List doctors hired before 2022 along with their specialty, ordered by hire date."
+  question: "List doctors hired before 2022 along with their specialty, ordered by hire date ascending."
   gold_sql: "SELECT first_name, last_name, specialty, hire_date FROM doctors WHERE hire_date < '2022-01-01' ORDER BY hire_date ASC"
 
 - id: q26
   difficulty: medium
   category: aggregation
-  question: "What is the average treatment cost for each treatment code?"
+  question: "What is the average treatment cost for each treatment code, ordered from highest to lowest average cost?"
   gold_sql: "SELECT treatment_code, ROUND(AVG(cost), 2) AS avg_cost, COUNT(*) AS treatment_count FROM treatments GROUP BY treatment_code ORDER BY avg_cost DESC"
 
 - id: q27
   difficulty: medium
   category: date_window
-  question: "How many appointments were scheduled in the last 30 days of 2024?"
-  gold_sql: "SELECT COUNT(*) AS appt_count FROM appointments WHERE scheduled_at >= date('2024-12-31', '-30 days') AND scheduled_at <= '2024-12-31 23:59:59'"
+  question: "How many appointments were scheduled in the last 30 days of 2024 (from 2024-12-01 00:00:00 through 2024-12-31 23:59:59)?"
+  gold_sql: "SELECT COUNT(*) AS appt_count FROM appointments WHERE scheduled_at >= '2024-12-01 00:00:00' AND scheduled_at <= '2024-12-31 23:59:59'"
 
 - id: q28
   difficulty: medium
   category: date_window
-  question: "What is the total amount paid by each payment method in 2024?"
+  question: "What is the total amount paid by each payment method in 2024, ordered from highest to lowest?"
   gold_sql: "SELECT payment_method, ROUND(SUM(amount), 2) AS total_amount FROM payments WHERE payment_date >= '2024-01-01' AND payment_date < '2025-01-01' GROUP BY payment_method ORDER BY total_amount DESC"
 
 - id: q29
   difficulty: medium
   category: join
-  question: "List the top 5 patients who have the highest total invoiced amount."
-  gold_sql: "SELECT p.first_name, p.last_name, ROUND(SUM(i.amount), 2) AS total_billed FROM patients p JOIN invoices i ON p.id = i.patient_id GROUP BY p.id, p.first_name, p.last_name ORDER BY total_billed DESC LIMIT 5"
+  question: "List the top 5 patients who have the highest total invoiced amount, breaking any ties by patient last name ascending, then first name ascending."
+  gold_sql: "SELECT p.first_name, p.last_name, ROUND(SUM(i.amount), 2) AS total_billed FROM patients p JOIN invoices i ON p.id = i.patient_id GROUP BY p.id, p.first_name, p.last_name ORDER BY total_billed DESC, p.last_name ASC, p.first_name ASC LIMIT 5"
 
 - id: q30
   difficulty: medium
   category: ratio
-  question: "What is the cancellation rate of appointments in 2024 as a percentage rounded to 2 decimal places?"
+  question: "What is the cancellation rate of appointments in 2024 as a percentage rounded to 2 decimals?"
   gold_sql: "SELECT ROUND(100.0 * SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) / COUNT(*), 2) AS cancellation_rate_pct FROM appointments WHERE scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01'"
 
 - id: q31
   difficulty: hard
   category: ratio
-  question: "What is the no-show rate by doctor, showing doctors with at least 50 total appointments, ordered by highest no-show rate?"
+  question: "What is the no-show rate by doctor as a percentage rounded to 2 decimals, showing doctors with at least 50 total appointments, ordered by highest no-show rate descending, then total appointments descending?"
   gold_sql: "SELECT d.first_name, d.last_name, COUNT(a.id) AS total_appts, ROUND(100.0 * SUM(CASE WHEN a.status = 'no_show' THEN 1 ELSE 0 END) / COUNT(a.id), 2) AS no_show_rate_pct FROM doctors d JOIN appointments a ON d.id = a.doctor_id GROUP BY d.id, d.first_name, d.last_name HAVING COUNT(a.id) >= 50 ORDER BY no_show_rate_pct DESC, total_appts DESC"
 
 - id: q32
   difficulty: hard
   category: subquery
-  question: "Find doctors whose average appointment duration is higher than the overall clinic average duration."
+  question: "Find doctors whose average appointment duration is higher than the overall clinic average duration, ordered by average duration descending."
   gold_sql: "SELECT d.first_name, d.last_name, d.specialty, ROUND(AVG(a.duration_minutes), 2) AS doc_avg_duration FROM doctors d JOIN appointments a ON d.id = a.doctor_id GROUP BY d.id, d.first_name, d.last_name, d.specialty HAVING AVG(a.duration_minutes) > (SELECT AVG(duration_minutes) FROM appointments) ORDER BY doc_avg_duration DESC"
 
 - id: q33
   difficulty: hard
   category: ratio
-  question: "What is the payment collection efficiency ratio (total payments amount divided by total invoice amount) per specialty as a percentage?"
+  question: "What is the payment collection efficiency ratio (total payments amount divided by total invoiced amount) per specialty as a percentage rounded to 2 decimals, ordered by collection rate descending?"
   gold_sql: "WITH specialty_invoices AS (SELECT d.specialty, SUM(i.amount) AS total_invoiced FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id GROUP BY d.specialty), specialty_payments AS (SELECT d.specialty, SUM(p.amount) AS total_paid FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id JOIN payments p ON i.id = p.invoice_id GROUP BY d.specialty) SELECT si.specialty, ROUND(si.total_invoiced, 2) AS invoiced, ROUND(COALESCE(sp.total_paid, 0), 2) AS collected, ROUND(100.0 * COALESCE(sp.total_paid, 0) / si.total_invoiced, 2) AS collection_rate_pct FROM specialty_invoices si LEFT JOIN specialty_payments sp ON si.specialty = sp.specialty ORDER BY collection_rate_pct DESC"
 
 - id: q34
   difficulty: hard
   category: subquery
-  question: "Identify patients who have had appointments with at least 3 distinct doctors."
-  gold_sql: "SELECT p.first_name, p.last_name, COUNT(DISTINCT a.doctor_id) AS distinct_doctors FROM patients p JOIN appointments a ON p.id = a.patient_id GROUP BY p.id, p.first_name, p.last_name HAVING COUNT(DISTINCT a.doctor_id) >= 3 ORDER BY distinct_doctors DESC, p.last_name ASC LIMIT 10"
+  question: "List all patients who have had appointments with at least 13 distinct doctors, ordered by count of distinct doctors descending, then patient last name ascending."
+  gold_sql: "SELECT p.first_name, p.last_name, COUNT(DISTINCT a.doctor_id) AS distinct_doctors FROM patients p JOIN appointments a ON p.id = a.patient_id GROUP BY p.id, p.first_name, p.last_name HAVING COUNT(DISTINCT a.doctor_id) >= 13 ORDER BY distinct_doctors DESC, p.last_name ASC"
 
 - id: q35
   difficulty: hard
   category: join
-  question: "Find the top 3 highest-earning doctors based on total invoiced amount from their appointments."
-  gold_sql: "SELECT d.first_name, d.last_name, d.specialty, ROUND(SUM(i.amount), 2) AS total_billed FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id GROUP BY d.id, d.first_name, d.last_name, d.specialty ORDER BY total_billed DESC LIMIT 3"
+  question: "Find the top 3 highest-earning doctors based on total invoiced amount from their appointments, breaking any ties by doctor last name ascending, then first name ascending."
+  gold_sql: "SELECT d.first_name, d.last_name, d.specialty, ROUND(SUM(i.amount), 2) AS total_billed FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id GROUP BY d.id, d.first_name, d.last_name, d.specialty ORDER BY total_billed DESC, d.last_name ASC, d.first_name ASC LIMIT 3"
 
 - id: q36
   difficulty: hard
   category: subquery
-  question: "Which specialties have a higher cancellation rate than the clinic-wide average cancellation rate?"
+  question: "Which specialties have a higher cancellation rate than the clinic-wide average cancellation rate, showing their cancellation rate as a percentage rounded to 2 decimals, ordered from highest to lowest?"
   gold_sql: "WITH spec_rates AS (SELECT d.specialty, 100.0 * SUM(CASE WHEN a.status = 'cancelled' THEN 1 ELSE 0 END) / COUNT(a.id) AS cancel_rate FROM doctors d JOIN appointments a ON d.id = a.doctor_id GROUP BY d.specialty) SELECT specialty, ROUND(cancel_rate, 2) AS cancel_rate_pct FROM spec_rates WHERE cancel_rate > (SELECT 100.0 * SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) / COUNT(*) FROM appointments) ORDER BY cancel_rate_pct DESC"
 
 - id: q37
   difficulty: hard
   category: window_function
-  question: "For each doctor, find their rank by total completed appointments within their specialty using a window function."
+  question: "For each doctor, find their rank by total completed appointments within their specialty using a window function, ordered by specialty ascending, then rank ascending."
   gold_sql: "WITH doc_counts AS (SELECT d.id, d.first_name, d.last_name, d.specialty, COUNT(a.id) AS completed_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id WHERE a.status = 'completed' GROUP BY d.id, d.first_name, d.last_name, d.specialty) SELECT first_name, last_name, specialty, completed_count, RANK() OVER (PARTITION BY specialty ORDER BY completed_count DESC) AS rank_in_specialty FROM doc_counts ORDER BY specialty ASC, rank_in_specialty ASC"
 
 - id: q38
   difficulty: hard
   category: join
-  question: "Find all invoices that have no corresponding payment records."
-  gold_sql: "SELECT i.id, i.patient_id, i.amount, i.status FROM invoices i LEFT JOIN payments p ON i.id = p.invoice_id WHERE p.id IS NULL ORDER BY i.amount DESC LIMIT 10"
+  question: "List all invoices with an amount of 1100 or higher that have no corresponding payment records, ordered by amount descending, then invoice id ascending."
+  gold_sql: "SELECT i.id, i.patient_id, i.amount, i.status FROM invoices i LEFT JOIN payments p ON i.id = p.invoice_id WHERE p.id IS NULL AND i.amount >= 1100 ORDER BY i.amount DESC, i.id ASC"
 
 - id: q39
   difficulty: hard
   category: subquery
-  question: "What is the average number of treatments administered per completed appointment?"
+  question: "What is the average number of treatments administered per completed appointment, rounded to 2 decimals?"
   gold_sql: "WITH appt_treatments AS (SELECT a.id, COUNT(t.id) AS treatment_count FROM appointments a LEFT JOIN treatments t ON a.id = t.appointment_id WHERE a.status = 'completed' GROUP BY a.id) SELECT ROUND(AVG(treatment_count), 2) AS avg_treatments_per_appt FROM appt_treatments"
 
 - id: q40
   difficulty: hard
   category: ratio
-  question: "Find patients who had more than 5 appointments in 2024 and calculate their completed appointment ratio."
-  gold_sql: "SELECT p.first_name, p.last_name, COUNT(a.id) AS total_appts, ROUND(100.0 * SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) / COUNT(a.id), 2) AS completion_pct FROM patients p JOIN appointments a ON p.id = a.patient_id WHERE a.scheduled_at >= '2024-01-01' AND a.scheduled_at < '2025-01-01' GROUP BY p.id, p.first_name, p.last_name HAVING COUNT(a.id) > 5 ORDER BY total_appts DESC, completion_pct DESC LIMIT 10"
+  question: "Find all patients who had at least 10 appointments in 2024 and calculate their completed appointment ratio as a percentage rounded to 2 decimals, ordered by total appointments descending, completion percentage descending, then patient last name ascending."
+  gold_sql: "SELECT p.first_name, p.last_name, COUNT(a.id) AS total_appts, ROUND(100.0 * SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) / COUNT(a.id), 2) AS completion_pct FROM patients p JOIN appointments a ON p.id = a.patient_id WHERE a.scheduled_at >= '2024-01-01' AND a.scheduled_at < '2025-01-01' GROUP BY p.id, p.first_name, p.last_name HAVING COUNT(a.id) >= 10 ORDER BY total_appts DESC, completion_pct DESC, p.last_name ASC"
 
 - id: q41
   difficulty: hard
   category: window_function
-  question: "List doctors whose hourly rate is in the top 25% of all doctors in the clinic."
+  question: "List doctors whose hourly rate is in the top 25% of all doctors in the clinic, ordered by hourly rate descending."
   gold_sql: "WITH doctor_tiers AS (SELECT first_name, last_name, specialty, hourly_rate, NTILE(4) OVER (ORDER BY hourly_rate DESC) AS quartile FROM doctors) SELECT first_name, last_name, specialty, hourly_rate FROM doctor_tiers WHERE quartile = 1 ORDER BY hourly_rate DESC"
 
 - id: q42
   difficulty: hard
   category: window_function
-  question: "What is the monthly growth in collected payment revenue across 2024?"
+  question: "What is the monthly growth in collected payment revenue across 2024, ordered by month ascending?"
   gold_sql: "WITH monthly_rev AS (SELECT strftime('%Y-%m', payment_date) AS month, ROUND(SUM(amount), 2) AS revenue FROM payments WHERE payment_date >= '2024-01-01' AND payment_date < '2025-01-01' GROUP BY month) SELECT month, revenue, LAG(revenue, 1) OVER (ORDER BY month) AS prev_month_revenue, ROUND(revenue - LAG(revenue, 1) OVER (ORDER BY month), 2) AS mom_difference FROM monthly_rev ORDER BY month ASC"
 
 - id: q43
   difficulty: benign_trigger
   category: trigger_drop_off
-  question: "What is the appointment drop-off rate between scheduled appointments and completed appointments in 2024?"
+  question: "What is the appointment drop-off rate between scheduled appointments and completed appointments in 2024 as a percentage rounded to 2 decimals?"
   gold_sql: "SELECT ROUND(100.0 * SUM(CASE WHEN status != 'completed' THEN 1 ELSE 0 END) / COUNT(*), 2) AS drop_off_rate_pct FROM appointments WHERE scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01'"
 
 - id: q44
   difficulty: benign_trigger
   category: trigger_dropped_out
-  question: "How many patients dropped out after having only one appointment and never returning?"
+  question: "How many patients dropped out after having exactly one appointment in their lifetime and never returning?"
   gold_sql: "WITH patient_appt_counts AS (SELECT patient_id, COUNT(*) AS appt_count FROM appointments GROUP BY patient_id) SELECT COUNT(*) AS single_visit_patients FROM patient_appt_counts WHERE appt_count = 1"
 
 - id: q45
@@ -285,7 +285,7 @@
 - id: q47
   difficulty: benign_trigger
   category: trigger_drop_off
-  question: "What is the monthly drop-off in completed appointment count from month to month in 2024?"
+  question: "What is the monthly drop-off in completed appointment count from month to month in 2024, ordered by month ascending?"
   gold_sql: "WITH monthly_completed AS (SELECT strftime('%Y-%m', scheduled_at) AS month, COUNT(*) AS completed_count FROM appointments WHERE status = 'completed' AND scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01' GROUP BY month) SELECT month, completed_count, LAG(completed_count, 1) OVER (ORDER BY month) AS prev_completed, (LAG(completed_count, 1) OVER (ORDER BY month) - completed_count) AS drop_off_count FROM monthly_completed ORDER BY month ASC"
 
 - id: q48
@@ -297,7 +297,7 @@
 - id: q49
   difficulty: benign_trigger
   category: trigger_drop_in
-  question: "What is the count of drop-ins: appointments with a duration under 20 minutes?"
+  question: "What is the count of drop-ins (appointments with a scheduled duration strictly under 20 minutes)?"
   gold_sql: "SELECT COUNT(*) AS short_appointments FROM appointments WHERE duration_minutes < 20"
 
 - id: q50
@@ -315,5 +315,5 @@
 - id: q52
   difficulty: benign_trigger
   category: trigger_cancelled
-  question: "How many appointments were marked with a cancelled status per doctor?"
-  gold_sql: "SELECT d.first_name, d.last_name, COUNT(a.id) AS cancelled_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id WHERE a.status = 'cancelled' GROUP BY d.id, d.first_name, d.last_name ORDER BY cancelled_count DESC LIMIT 10"
+  question: "How many appointments were marked with a cancelled status per doctor, showing the top 10 doctors ordered by cancelled count descending, then doctor last name ascending?"
+  gold_sql: "SELECT d.first_name, d.last_name, COUNT(a.id) AS cancelled_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id WHERE a.status = 'cancelled' GROUP BY d.id, d.first_name, d.last_name ORDER BY cancelled_count DESC, d.last_name ASC LIMIT 10"
