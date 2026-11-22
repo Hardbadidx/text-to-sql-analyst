@@ -28,6 +28,9 @@ COPY --chown=appuser:appuser clinic.db clinic.db
 COPY --chown=appuser:appuser data_checksum.txt data_checksum.txt
 COPY --chown=appuser:appuser eval/results/latest.json eval/results/latest.json
 
+# Create logs directory and ensure non-root ownership across /app
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
 # Switch to non-root user
 USER appuser
 

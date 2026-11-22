@@ -1,5 +1,6 @@
 """Structured JSONL audit logger for query tracking and security compliance."""
 
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,7 +30,9 @@ class AuditLogger:
 
     def __init__(self, log_path: Path | str | None = None):
         self.log_path = Path(log_path or settings.log_file)
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._disabled = False
+        self._dir_created = False
+        self._warned = False
 
     def log(
         self,
@@ -62,8 +65,36 @@ class AuditLogger:
             debug_error=debug_error,
         )
 
-        with open(self.log_path, "a", encoding="utf-8") as f:
-            f.write(entry.model_dump_json() + "\n")
+        if self._disabled:
+            return entry
+
+        if not self._dir_created:
+            try:
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                self._dir_created = True
+            except (PermissionError, OSError) as e:
+                self._disabled = True
+                if not self._warned:
+                    warnings.warn(
+                        f"Audit logging disabled: unable to create log directory {self.log_path.parent}: {e}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    self._warned = True
+                return entry
+
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(entry.model_dump_json() + "\n")
+        except (PermissionError, OSError) as e:
+            self._disabled = True
+            if not self._warned:
+                warnings.warn(
+                    f"Audit logging disabled: unable to write to log file {self.log_path}: {e}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self._warned = True
 
         return entry
 
