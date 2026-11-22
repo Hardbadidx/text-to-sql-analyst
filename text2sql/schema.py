@@ -78,16 +78,19 @@ class DatabaseSchema(BaseModel):
                 null_str = " NULL" if col.nullable else " NOT NULL"
 
                 if col.sample_values:
-                    # Format samples safely
+                    # Format samples safely (max 3 per column, each truncated to 50 chars)
                     formatted_samples = []
-                    for v in col.sample_values:
-                        if isinstance(v, str):
-                            formatted_samples.append(f"'{v}'")
-                        elif v is None:
+                    for v in col.sample_values[:3]:
+                        if v is None:
                             continue
+                        val_str = str(v)
+                        if len(val_str) > 50:
+                            val_str = val_str[:47] + "..."
+                        if isinstance(v, str):
+                            formatted_samples.append(f"'{val_str}'")
                         else:
-                            formatted_samples.append(str(v))
-                    samples_str = f" | Samples: [{', '.join(formatted_samples[:3])}]"
+                            formatted_samples.append(val_str)
+                    samples_str = f" | Samples: [{', '.join(formatted_samples)}]"
                 else:
                     samples_str = ""
 

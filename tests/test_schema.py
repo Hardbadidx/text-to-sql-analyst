@@ -59,3 +59,21 @@ def test_allowed_columns_mapping(test_db_engine):
     assert "phone" not in allowed["patients"]
     assert "email" not in allowed["patients"]
     assert "address" not in allowed["patients"]
+
+
+def test_sample_values_truncated_to_max_50_chars(test_db_engine):
+    """Sample values in prompt context must be at most 3 items per column, each max 50 chars."""
+    schema = introspect_schema(test_db_engine, denylist=["phone", "email", "address"])
+    # Inject a long string sample
+    schema.tables["patients"].columns[1].sample_values = [
+        "A" * 100,
+        "Short",
+        "Another long value " * 10,
+        "Extra 4th value that should be excluded",
+    ]
+    prompt_ctx = schema.to_prompt_context()
+    # Check that 4th value is not included
+    assert "Extra 4th value" not in prompt_ctx
+    # Check that 100-char string was truncated with ellipsis to 50 chars
+    assert "A" * 50 not in prompt_ctx
+    assert "A" * 47 + "..." in prompt_ctx

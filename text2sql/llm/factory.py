@@ -13,10 +13,18 @@ def get_llm_provider(custom_settings: Settings | None = None) -> BaseLLMProvider
     provider_name = cfg.llm_provider.lower().strip()
 
     if provider_name == "gemini":
-        return GeminiProvider(api_key=cfg.gemini_api_key, model=cfg.gemini_model)
+        return GeminiProvider(
+            api_key=cfg.gemini_api_key,
+            model=cfg.gemini_model,
+            timeout_seconds=cfg.llm_timeout_seconds,
+        )
 
     elif provider_name == "ollama":
-        return OllamaProvider(base_url=cfg.ollama_base_url, model=cfg.ollama_model)
+        return OllamaProvider(
+            base_url=cfg.ollama_base_url,
+            model=cfg.ollama_model,
+            timeout_seconds=cfg.llm_timeout_seconds,
+        )
 
     elif provider_name == "mock":
         return MockLLMProvider()

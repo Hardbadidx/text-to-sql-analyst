@@ -15,9 +15,11 @@ class QueryAuditLog(BaseModel):
     question: str
     final_sql: str | None
     attempts: int
-    status: str  # ok, blocked, refused, error
+    status: str  # ok, blocked, refused, error, provider_unavailable
     latency_ms: float
     row_count: int = 0
+    prompt_chars: int = 0
+    prompt_tokens_est: int = 0
     error_message: str | None = None
 
 
@@ -36,6 +38,8 @@ class AuditLogger:
         status: str,
         latency_ms: float,
         row_count: int = 0,
+        prompt_chars: int = 0,
+        prompt_tokens_est: int = 0,
         error_message: str | None = None,
     ) -> QueryAuditLog:
         """Write an audit record to JSONL, sanitizing any denylisted patterns."""
@@ -50,6 +54,8 @@ class AuditLogger:
             status=status,
             latency_ms=round(latency_ms, 2),
             row_count=row_count,
+            prompt_chars=prompt_chars,
+            prompt_tokens_est=prompt_tokens_est,
             error_message=error_message,
         )
 

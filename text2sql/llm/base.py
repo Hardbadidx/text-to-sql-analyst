@@ -14,17 +14,19 @@ class LLMError(Exception):
     pass
 
 
-class LLMRateLimitError(LLMError):
-    """Raised when an LLM provider encounters a rate limit or quota ceiling."""
+class ProviderUnavailableError(LLMError):
+    """Raised when an LLM provider cannot be reached due to connection, authentication, timeout,
+
+    or invalid model configuration.
+
+    This error must fail fast without SQL self-correction retries.
+    """
 
     pass
 
 
-class ProviderUnavailableError(LLMError):
-    """Raised when an LLM provider cannot be reached due to connection, authentication, or timeout issues.
-
-    This error must fail fast without SQL self-correction retries.
-    """
+class LLMRateLimitError(ProviderUnavailableError):
+    """Raised when an LLM provider encounters a rate limit or quota ceiling."""
 
     pass
 

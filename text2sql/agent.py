@@ -71,6 +71,8 @@ class AgentResult(BaseModel):
     attempts: int = 1
     status: str  # 'ok', 'blocked', 'refused', 'error', 'provider_unavailable'
     latency_ms: float = 0.0
+    prompt_chars: int = 0
+    prompt_tokens_est: int = 0
     error_message: str | None = None
     attempts_history: list[AttemptDetail] = Field(default_factory=list)
 
@@ -222,6 +224,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         pre_refusal = self._check_deterministic_refusal(question)
         if pre_refusal is not None:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            q_chars = len(question)
+            q_tokens = max(1, q_chars // 4)
             attempts_history.append(
                 AttemptDetail(
                     attempt=1,
@@ -238,6 +242,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 status="refused",
                 latency_ms=elapsed_ms,
                 row_count=0,
+                prompt_chars=q_chars,
+                prompt_tokens_est=q_tokens,
                 error_message=pre_refusal,
             )
             return AgentResult(
@@ -251,6 +257,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 attempts=1,
                 status="refused",
                 latency_ms=round(elapsed_ms, 2),
+                prompt_chars=q_chars,
+                prompt_tokens_est=q_tokens,
                 error_message=pre_refusal,
                 attempts_history=attempts_history,
             )
@@ -258,9 +266,13 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         error_feedback: str | None = None
         last_sql: str | None = None
         last_error: str | None = None
+        prompt_chars: int = 0
+        prompt_tokens_est: int = 0
 
         for attempt in range(1, max_attempts + 1):
             prompt = self._build_prompt(question, attempt, error_feedback)
+            prompt_chars = len(prompt)
+            prompt_tokens_est = max(1, prompt_chars // 4)
 
             # 1. Structured LLM Generation
             try:
@@ -270,7 +282,7 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     system_prompt=self.SYSTEM_PROMPT,
                 )
             except ProviderUnavailableError as pue:
-                # LLM connection/auth/timeout -> FAIL FAST, NO RETRIES
+                # LLM connection/auth/timeout/invalid-model -> FAIL FAST, NO RETRIES
                 elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                 err_msg = str(pue)
                 attempts_history.append(
@@ -289,6 +301,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     status="provider_unavailable",
                     latency_ms=elapsed_ms,
                     row_count=0,
+                    prompt_chars=prompt_chars,
+                    prompt_tokens_est=prompt_tokens_est,
                     error_message=err_msg,
                 )
                 return AgentResult(
@@ -302,6 +316,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     attempts=1,
                     status="provider_unavailable",
                     latency_ms=round(elapsed_ms, 2),
+                    prompt_chars=prompt_chars,
+                    prompt_tokens_est=prompt_tokens_est,
                     error_message=err_msg,
                     attempts_history=attempts_history,
                 )
@@ -320,9 +336,28 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 )
                 continue
             except Exception as e:
-                # Fallback check for connection/auth failures in generic exceptions
+                # Fallback check for connection/auth/timeout/400/404 failures in generic exceptions
                 err_str = str(e).lower()
-                if any(w in err_str for w in ["connect", "refused", "timed out", "unreachable", "401", "403", "forbidden"]):
+                is_provider_issue = any(
+                    w in err_str
+                    for w in [
+                        "connect",
+                        "refused",
+                        "timed out",
+                        "timeout",
+                        "deadline_exceeded",
+                        "unreachable",
+                        "401",
+                        "403",
+                        "400",
+                        "404",
+                        "invalid_argument",
+                        "not_found",
+                        "forbidden",
+                        "ssl",
+                    ]
+                )
+                if is_provider_issue:
                     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                     err_msg = str(e)
                     attempts_history.append(
@@ -341,6 +376,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                         status="provider_unavailable",
                         latency_ms=elapsed_ms,
                         row_count=0,
+                        prompt_chars=prompt_chars,
+                        prompt_tokens_est=prompt_tokens_est,
                         error_message=err_msg,
                     )
                     return AgentResult(
@@ -354,6 +391,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                         attempts=1,
                         status="provider_unavailable",
                         latency_ms=round(elapsed_ms, 2),
+                        prompt_chars=prompt_chars,
+                        prompt_tokens_est=prompt_tokens_est,
                         error_message=err_msg,
                         attempts_history=attempts_history,
                     )
@@ -391,6 +430,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     status="refused",
                     latency_ms=elapsed_ms,
                     row_count=0,
+                    prompt_chars=prompt_chars,
+                    prompt_tokens_est=prompt_tokens_est,
                     error_message=refusal_msg,
                 )
                 return AgentResult(
@@ -404,6 +445,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                     attempts=attempt,
                     status="refused",
                     latency_ms=round(elapsed_ms, 2),
+                    prompt_chars=prompt_chars,
+                    prompt_tokens_est=prompt_tokens_est,
                     error_message=refusal_msg,
                     attempts_history=attempts_history,
                 )
@@ -487,6 +530,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 status="ok",
                 latency_ms=elapsed_ms,
                 row_count=exec_res.row_count,
+                prompt_chars=prompt_chars,
+                prompt_tokens_est=prompt_tokens_est,
             )
 
             return AgentResult(
@@ -500,6 +545,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 attempts=attempt,
                 status="ok",
                 latency_ms=round(elapsed_ms, 2),
+                prompt_chars=prompt_chars,
+                prompt_tokens_est=prompt_tokens_est,
                 error_message=None,
                 attempts_history=attempts_history,
             )
@@ -513,6 +560,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             status="error",
             latency_ms=elapsed_ms,
             row_count=0,
+            prompt_chars=prompt_chars,
+            prompt_tokens_est=prompt_tokens_est,
             error_message=last_error,
         )
         return AgentResult(
@@ -526,6 +575,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             attempts=max_attempts,
             status="error",
             latency_ms=round(elapsed_ms, 2),
+            prompt_chars=prompt_chars,
+            prompt_tokens_est=prompt_tokens_est,
             error_message=last_error,
             attempts_history=attempts_history,
         )

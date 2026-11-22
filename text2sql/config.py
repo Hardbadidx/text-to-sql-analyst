@@ -49,6 +49,10 @@ class Settings(BaseSettings):
         default="ollama",
         description="LLM provider: 'ollama', 'gemini', or 'mock'.",
     )
+    llm_timeout_seconds: float = Field(
+        default=60.0,
+        description="Timeout in seconds for LLM provider HTTP requests.",
+    )
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         description="Base URL for Ollama local API.",
@@ -62,7 +66,7 @@ class Settings(BaseSettings):
         description="Google Gemini API key.",
     )
     gemini_model: str = Field(
-        default="gemini-2.5-flash",
+        default="gemini-3.5-flash-lite",
         description="Google Gemini model identifier.",
     )
 

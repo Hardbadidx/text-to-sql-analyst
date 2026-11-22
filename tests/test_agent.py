@@ -7,7 +7,7 @@ import pytest
 
 from text2sql.agent import Text2SQLAgent
 from text2sql.config import Settings
-from text2sql.llm.base import ProviderUnavailableError
+from text2sql.llm.base import LLMRateLimitError, ProviderUnavailableError
 from text2sql.llm.mock import MockLLMProvider
 
 
@@ -298,4 +298,69 @@ def test_provider_unavailable_fails_fast_without_retries(test_settings):
     entry = json.loads(lines[-1])
     assert entry["status"] == "provider_unavailable"
     assert entry["attempts"] == 1
+
+
+def test_mock_provider_timeout_fails_fast_as_provider_unavailable(test_settings):
+    """LLM call timeout must fail fast (1 attempt) with status 'provider_unavailable' and prompt size logged."""
+    mock_provider = MockLLMProvider(
+        responses=[ProviderUnavailableError("Gemini request timed out after 60.0s: The read operation timed out")]
+    )
+    agent = Text2SQLAgent(custom_settings=test_settings, llm_provider=mock_provider)
+
+    result = agent.ask("How many total completed appointments are in the database?")
+
+    assert result.status == "provider_unavailable"
+    assert result.attempts == 1
+    assert len(mock_provider.call_history) == 1, "Must fail fast without retrying SQL generation"
+    assert "timed out" in result.explanation.lower()
+    assert result.prompt_chars > 0
+    assert result.prompt_tokens_est > 0
+
+    # Verify audit log recorded prompt size metrics
+    log_path = Path(test_settings.log_file)
+    assert log_path.exists()
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    entry = json.loads(lines[-1])
+    assert entry["status"] == "provider_unavailable"
+    assert entry["prompt_chars"] > 0
+    assert entry["prompt_tokens_est"] > 0
+
+
+def test_mock_provider_rate_limit_exhaustion_fails_as_provider_unavailable(test_settings):
+    """Rate limit exhaustion (or capacity 503) must terminate as 'provider_unavailable' without SQL retry."""
+    mock_provider = MockLLMProvider(
+        responses=[
+            LLMRateLimitError(
+                "Gemini rate limit or temporary capacity exceeded (attempts=4, total_backoff=60.0s): 429 RESOURCE_EXHAUSTED"
+            )
+        ]
+    )
+    agent = Text2SQLAgent(custom_settings=test_settings, llm_provider=mock_provider)
+
+    result = agent.ask("List 5 doctor names.")
+
+    assert result.status == "provider_unavailable"
+    assert result.attempts == 1
+    assert len(mock_provider.call_history) == 1
+    assert "rate limit" in result.explanation.lower() or "capacity" in result.explanation.lower()
+
+
+def test_mock_provider_invalid_model_fails_fast_as_provider_unavailable(test_settings):
+    """Invalid model name (400 / 404) must fail fast as 'provider_unavailable' without SQL retry."""
+    mock_provider = MockLLMProvider(
+        responses=[
+            ProviderUnavailableError(
+                "Gemini model configuration error (404): Model 'gemini-nonexistent' not found. Verify GEMINI_MODEL setting."
+            )
+        ]
+    )
+    agent = Text2SQLAgent(custom_settings=test_settings, llm_provider=mock_provider)
+
+    result = agent.ask("How many appointments were completed in 2024?")
+
+    assert result.status == "provider_unavailable"
+    assert result.attempts == 1
+    assert len(mock_provider.call_history) == 1
+    assert "model" in result.explanation.lower()
+
 
