@@ -1,9 +1,9 @@
 {
   "metadata": {
     "model": "gemini-3.5-flash-lite",
-    "timestamp": "2026-11-22T10:39:22.381236+00:00",
-    "git_commit": "08f168c9494791c1a46409d081cba1c0867501e5",
-    "git_dirty": true,
+    "timestamp": "2026-11-22T10:40:35.269214+00:00",
+    "git_commit": "4151e667ffe5d7dc595762e384fdb3102827a6ed",
+    "git_dirty": false,
     "total_questions": 57,
     "quota_exhausted": false
   },
@@ -68,7 +68,7 @@
       "ast_validator": 0,
       "read_only_executor": 0
     },
-    "mean_latency_ms": 5527.23
+    "mean_latency_ms": 0.0
   },
   "results": [
     {
@@ -1020,7 +1020,7 @@
       "is_correct_exact": true,
       "is_correct_strict": true,
       "is_correct_lenient": true,
-      "cached": false,
+      "cached": true,
       "sql": "SELECT d.specialty, SUM(i.amount) AS total_invoiced_revenue FROM invoices AS i JOIN appointments AS a ON i.appointment_id = a.id JOIN doctors AS d ON a.doctor_id = d.id GROUP BY d.specialty ORDER BY total_invoiced_revenue DESC LIMIT 1000",
       "gold_sql": "SELECT d.specialty, ROUND(SUM(i.amount), 2) AS total_invoiced FROM doctors d JOIN appointments a ON d.id = a.doctor_id JOIN invoices i ON a.id = i.appointment_id GROUP BY d.specialty ORDER BY total_invoiced DESC",
       "error_message": null
@@ -1038,7 +1038,7 @@
       "is_correct_exact": true,
       "is_correct_strict": true,
       "is_correct_lenient": true,
-      "cached": false,
+      "cached": true,
       "sql": "SELECT ROUND(SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS no_show_percentage FROM appointments WHERE scheduled_at >= '2024-01-01 00:00:00' AND scheduled_at <= '2024-12-31 23:59:59' LIMIT 1000",
       "gold_sql": "SELECT ROUND(100.0 * SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) / COUNT(*), 2) AS no_show_rate_pct FROM appointments WHERE scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01'",
       "error_message": null
@@ -1056,7 +1056,7 @@
       "is_correct_exact": true,
       "is_correct_strict": true,
       "is_correct_lenient": true,
-      "cached": false,
+      "cached": true,
       "sql": "SELECT payment_method, SUM(amount) AS total_revenue FROM payments GROUP BY payment_method ORDER BY total_revenue DESC LIMIT 1000",
       "gold_sql": "SELECT payment_method, ROUND(SUM(amount), 2) AS total_collected FROM payments GROUP BY payment_method ORDER BY total_collected DESC",
       "error_message": null
@@ -1074,7 +1074,7 @@
       "is_correct_exact": true,
       "is_correct_strict": true,
       "is_correct_lenient": true,
-      "cached": false,
+      "cached": true,
       "sql": "SELECT STRFTIME('%Y-%m', scheduled_at) AS month, COUNT(*) AS completed_appointments_count FROM appointments WHERE status = 'completed' AND scheduled_at >= '2024-01-01 00:00:00' AND scheduled_at <= '2024-12-31 23:59:59' GROUP BY month ORDER BY month LIMIT 1000",
       "gold_sql": "SELECT strftime('%Y-%m', scheduled_at) AS month, COUNT(*) AS completed_count FROM appointments WHERE status = 'completed' AND scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01' GROUP BY month ORDER BY month ASC",
       "error_message": null
@@ -1092,7 +1092,7 @@
       "is_correct_exact": true,
       "is_correct_strict": true,
       "is_correct_lenient": true,
-      "cached": false,
+      "cached": true,
       "sql": null,
       "gold_sql": null,
       "error_message": "Patient contact PII, including email addresses, is strictly protected and cannot be queried."

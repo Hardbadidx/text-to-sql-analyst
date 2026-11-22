@@ -53,9 +53,10 @@ A production-grade, safety-first Text-to-SQL agent that translates natural langu
 ```
 
 > [!IMPORTANT]
-> **Security Boundary Architecture**:
-> The **AST validator (`SQLValidator`) plus the read-only database connection (`SQLExecutor`) constitutes the actual security boundary**.
-> The keyword pre-check (`_check_deterministic_refusal`) is **only a fast path** designed to avoid unnecessary LLM latency and API token consumption on obvious mutations, prompt injections, and PII requests. Even if an adversarial prompt completely bypasses the keyword pre-check, the query can never modify data or access denylisted fields because of the dual guarantees enforced by the AST validator and the read-only SQLite engine.
+> **Security Boundary Architecture & PII Denylist Policy**:
+> 1. The **AST validator (`SQLValidator`) plus the read-only database connection (`SQLExecutor`) constitutes the actual security boundary**.
+> 2. The keyword pre-check (`_check_deterministic_refusal`) is **only a fast path** designed to avoid unnecessary LLM latency and API token consumption on obvious mutations, prompt injections, and raw PII exfiltration.
+> 3. **PII Denylist Policy**: Protected columns (`phone`, `email`, `address`, `ssn`) **cannot be referenced anywhere in a query, even in aggregate functions or conditional expressions** (e.g. `COUNT(email)`, `WHERE email IS NOT NULL`, `CASE WHEN phone IS NULL...`). Any SQL referencing a denylisted column is blocked closed by the AST validator (`SecurityValidationError`). Inquiries attempting to query, infer, or count patient contact details are refused under the clinic data privacy policy.
 
 ---
 
@@ -69,7 +70,7 @@ A production-grade, safety-first Text-to-SQL agent that translates natural langu
   - **Google Gemini** (via official Google GenAI SDK with rate-limiting, exponential backoff, and daily quota detection)
   - **Mock Provider** (for deterministic unit tests and CI without network)
 - **Auto-Selected Visualizations**: Intelligently analyzes result sets (shapes, categorical columns, date series, distributions) to automatically render Plotly bar charts, line graphs, pie charts, or tables.
-- **Comprehensive Evaluation Harness**: Benchmark suite of 52 questions across easy, medium, hard, and benign trigger-word queries, plus 22 adversarial safety cases. Includes rate limiting (12 req/min), disk response caching (`eval/cache/`), and graceful daily quota suspension.
+- **Comprehensive Evaluation Harness**: Benchmark suite of 56 accuracy queries across easy, medium, hard, and benign trigger-word queries, 1 explicit policy refusal query (`q57`), plus 22 adversarial safety cases. Includes rate limiting (12 req/min), disk response caching (`eval/cache/`), and graceful daily quota suspension.
 
 ---
 
