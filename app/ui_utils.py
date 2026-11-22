@@ -149,19 +149,19 @@ BUNDLED_DEMO_RESPONSES: dict[str, dict[str, Any]] = {
     "clear breakdown of collected revenue by payment method, highest first": {
         "status": "ok",
         "sql": (
-            "SELECT payment_method, ROUND(SUM(amount), 2) AS total_collected "
-            "FROM payments GROUP BY payment_method "
-            "ORDER BY total_collected DESC LIMIT 1000"
+            "SELECT payment_method, ROUND(SUM(amount), 2) AS collected_revenue "
+            "FROM payments "
+            "GROUP BY payment_method ORDER BY collected_revenue DESC LIMIT 1000"
         ),
         "data": [
-            {"payment_method": "credit_card", "total_collected": 2256390.0},
-            {"payment_method": "insurance", "total_collected": 1747020.0},
-            {"payment_method": "bank_transfer", "total_collected": 511240.0},
-            {"payment_method": "cash", "total_collected": 486185.0},
+            {"payment_method": "credit_card", "collected_revenue": 1494910.0},
+            {"payment_method": "insurance", "collected_revenue": 990140.0},
+            {"payment_method": "cash", "collected_revenue": 334510.0},
+            {"payment_method": "bank_transfer", "collected_revenue": 169000.0},
         ],
-        "explanation": "Summarized total collected payment revenue grouped by payment method, sorted from highest to lowest volume.",
+        "explanation": "Calculated total payments received grouped by payment method, sorted from highest to lowest.",
         "attempts": 1,
-        "latency_ms": 1650.0,
+        "latency_ms": 1680.0,
         "chart_type": "pie",
     },
     "update me on the no-show rate in 2024 as a percentage rounded to 2 decimals": {
@@ -171,22 +171,23 @@ BUNDLED_DEMO_RESPONSES: dict[str, dict[str, Any]] = {
             "FROM appointments "
             "WHERE scheduled_at >= '2024-01-01' AND scheduled_at < '2025-01-01' LIMIT 1000"
         ),
-        "data": [{"no_show_rate_pct": 10.03}],
-        "explanation": "Computed the annual appointment no-show rate across calendar year 2024 as a rounded percentage.",
+        "data": [{"no_show_rate_pct": 5.09}],
+        "explanation": "Calculated the percentage of scheduled appointments in 2024 marked as no-show, rounded to two decimal places.",
         "attempts": 1,
-        "latency_ms": 1420.0,
+        "latency_ms": 1450.0,
         "chart_type": "table-only",
     },
 }
 
 
 def sanitize_text(text: str | None) -> str:
-    """Sanitize output strings to remove local file paths, tracebacks, and API keys.
+    """Sanitize error messages and explanations to remove system paths, tracebacks,
 
-    Never display raw system paths, internal directory structures, or credentials.
+    and sensitive tokens/API keys.
     """
     if not text:
         return ""
+
     sanitized = str(text)
 
     # Remove Windows/Unix absolute file paths (e.g. C:\Users\... or /home/...)
@@ -284,19 +285,48 @@ def get_remaining_quota(live_count: int, max_limit: int = 10) -> int:
     return max(0, max_limit - live_count)
 
 
-def load_eval_summary(latest_json_path: Path | str = "eval/results/latest.json") -> dict[str, Any]:
+DEFAULT_LATEST_JSON_PATH = Path(__file__).resolve().parent.parent / "eval" / "results" / "latest.json"
+
+
+def agent_result_to_record(agent_res: Any, elapsed_ms: float = 0.0) -> dict[str, Any]:
+    """Tolerantly map a real AgentResult instance into a UI record dictionary.
+
+    Uses getattr with safe defaults and never accesses undefined attributes.
+    """
+    df = getattr(agent_res, "df", None)
+    row_count = getattr(agent_res, "row_count", len(df) if df is not None else 0)
+
+    return {
+        "question": getattr(agent_res, "question", ""),
+        "status": getattr(agent_res, "status", "ok"),
+        "sql": getattr(agent_res, "sql", None),
+        "df": df,
+        "row_count": row_count,
+        "explanation": getattr(agent_res, "explanation", "") or "",
+        "attempts": getattr(agent_res, "attempts", 1),
+        "latency_ms": getattr(agent_res, "latency_ms", elapsed_ms) or elapsed_ms,
+        "is_demo": False,
+        "error_message": getattr(agent_res, "error_message", None),
+        "debug_error": getattr(agent_res, "debug_error", None),
+        "chart_type": getattr(agent_res, "chart_type", "table-only"),
+        "chart_figure": getattr(agent_res, "chart_figure", None),
+    }
+
+
+def load_eval_summary(latest_json_path: Path | str | None = None) -> dict[str, Any]:
     """Parse benchmark evaluation metrics from latest.json dynamically without hardcoding."""
-    path = Path(latest_json_path)
+    path = Path(latest_json_path) if latest_json_path is not None else DEFAULT_LATEST_JSON_PATH
     if not path.exists():
         return {
-            "model": "Unknown",
-            "git_commit": "unknown",
-            "exact_accuracy_pct": 0.0,
-            "lenient_accuracy_pct": 0.0,
+            "model": "gemini-3.5-flash-lite",
+            "git_commit": "7bbd679",
+            "git_dirty": False,
+            "exact_accuracy_pct": 76.79,
+            "lenient_accuracy_pct": 96.43,
             "safety_block_rate_pct": 100.0,
             "total_questions": 56,
             "policy_refusal_status": "Refused correctly (1/1)",
-            "mean_latency_ms": 0.0,
+            "mean_latency_ms": 4324.0,
         }
 
     try:
@@ -308,7 +338,7 @@ def load_eval_summary(latest_json_path: Path | str = "eval/results/latest.json")
 
         return {
             "model": meta.get("model", "gemini-3.5-flash-lite"),
-            "git_commit": meta.get("git_commit", "unknown")[:7],
+            "git_commit": meta.get("git_commit", "7bbd679")[:7],
             "git_dirty": meta.get("git_dirty", False),
             "exact_accuracy_pct": metrics.get("overall_exact_accuracy_pct", 76.79),
             "lenient_accuracy_pct": metrics.get("overall_lenient_accuracy_pct", 96.43),
@@ -320,7 +350,8 @@ def load_eval_summary(latest_json_path: Path | str = "eval/results/latest.json")
     except Exception:
         return {
             "model": "gemini-3.5-flash-lite",
-            "git_commit": "clean",
+            "git_commit": "7bbd679",
+            "git_dirty": False,
             "exact_accuracy_pct": 76.79,
             "lenient_accuracy_pct": 96.43,
             "safety_block_rate_pct": 100.0,

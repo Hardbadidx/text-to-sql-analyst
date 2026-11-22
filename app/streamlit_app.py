@@ -20,6 +20,7 @@ import streamlit as st
 
 from app.ui_utils import (
     EXAMPLE_QUESTIONS,
+    agent_result_to_record,
     check_quota_limit,
     format_status_message,
     get_demo_response,
@@ -77,11 +78,8 @@ def render_sidebar(agent: Text2SQLAgent, eval_summary: dict[str, Any]) -> None:
             demo_active = st.session_state["demo_mode"] or (remaining == 0)
             st.metric("Mode", "Demo" if demo_active else "Live LLM")
 
-        # Demo mode toggle
-        manual_demo = st.toggle("Enable Demo Mode (Offline / Cached)", value=st.session_state["demo_mode"])
-        if manual_demo != st.session_state["demo_mode"]:
-            st.session_state["demo_mode"] = manual_demo
-            st.rerun()
+        # Demo mode toggle directly bound to session state
+        st.toggle("Enable Demo Mode (Offline / Cached)", key="demo_mode")
 
         st.divider()
 
@@ -127,19 +125,17 @@ def render_sidebar(agent: Text2SQLAgent, eval_summary: dict[str, Any]) -> None:
             st.caption("No queries run in this session yet.")
         else:
             for idx, hist_entry in enumerate(reversed(st.session_state["history"])):
-                q_text = hist_entry["question"]
+                q_text = hist_entry.get("question", "")
                 status = hist_entry.get("status", "ok")
                 icon = "✅" if status == "ok" else ("🛡️" if status == "refused" else "🚫")
                 btn_label = f"{icon} {q_text[:35]}..." if len(q_text) > 35 else f"{icon} {q_text}"
                 if st.button(btn_label, key=f"hist_{idx}"):
                     st.session_state["active_result"] = hist_entry
                     st.session_state["current_question"] = q_text
-                    st.rerun()
 
             if st.button("🗑️ Clear History", use_container_width=True):
                 st.session_state["history"] = []
                 st.session_state["active_result"] = None
-                st.rerun()
 
 
 def run_query(question: str, agent: Text2SQLAgent) -> None:
@@ -160,12 +156,15 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "status": demo_resp.get("status", "ok"),
                 "sql": demo_resp.get("sql"),
                 "df": demo_resp.get("df"),
+                "row_count": len(demo_resp["df"]) if demo_resp.get("df") is not None else 0,
                 "explanation": demo_resp.get("explanation", "Pre-verified benchmark response."),
                 "attempts": demo_resp.get("attempts", 1),
                 "latency_ms": demo_resp.get("latency_ms", 1200.0),
                 "is_demo": True,
                 "error_message": demo_resp.get("error_message"),
-                "chart_type": demo_resp.get("chart_type"),
+                "debug_error": None,
+                "chart_type": demo_resp.get("chart_type", "table-only"),
+                "chart_figure": None,
             }
             st.session_state["active_result"] = record
             st.session_state["history"].append(record)
@@ -178,6 +177,7 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "status": "refused",
                 "sql": None,
                 "df": None,
+                "row_count": 0,
                 "explanation": (
                     f"Session quota limit reached ({MAX_LIVE_QUERIES} live questions per session). "
                     "Please select one of the 6 example questions above to explore pre-verified demo results."
@@ -185,7 +185,10 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "attempts": 0,
                 "latency_ms": 0.0,
                 "is_demo": True,
-                "refusal_reason": "Live query limit reached for this session.",
+                "error_message": "Live query limit reached for this session.",
+                "debug_error": None,
+                "chart_type": "table-only",
+                "chart_figure": None,
             }
             st.session_state["active_result"] = record
             st.session_state["history"].append(record)
@@ -198,44 +201,37 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
         elapsed_ms = round((time.perf_counter() - start_t) * 1000.0, 2)
 
         # Detect quota exhaustion from provider
-        if agent_res.status == "provider_unavailable":
-            err_lower = (agent_res.error_message or "").lower()
+        status = getattr(agent_res, "status", "ok")
+        err_msg = getattr(agent_res, "error_message", None)
+        if status == "provider_unavailable":
+            err_lower = (err_msg or "").lower()
             if any(w in err_lower for w in ["quota", "perday", "429", "resource_exhausted"]):
                 st.session_state["demo_mode"] = True
 
         st.session_state["live_query_count"] += 1
 
-        record = {
-            "question": cleaned_q,
-            "status": agent_res.status,
-            "sql": agent_res.sql,
-            "df": agent_res.df,
-            "explanation": agent_res.explanation,
-            "attempts": agent_res.attempts,
-            "latency_ms": elapsed_ms,
-            "is_demo": False,
-            "error_message": agent_res.error_message,
-            "refusal_reason": agent_res.refusal_reason,
-            "chart_type": agent_res.chart_type,
-        }
+        record = agent_result_to_record(agent_res, elapsed_ms)
         st.session_state["active_result"] = record
         st.session_state["history"].append(record)
 
 
-def render_result_view(result: dict[str, Any]) -> None:
-    """Render the active query result including banner, metrics, SQL, dataframe, and charts."""
-    status = result.get("status", "ok")
-    err_msg = result.get("error_message")
-    explanation = result.get("explanation")
-    refusal_reason = result.get("refusal_reason")
-    is_demo = result.get("is_demo", False)
+def render_result_view(result: dict[str, Any] | Any) -> None:
+    """Render the active query result including banner, metrics, SQL, dataframe, and charts.
+
+    Tolerant to both dictionaries and object instances via getattr.
+    """
+    status = getattr(result, "status", None) if not isinstance(result, dict) else result.get("status", "ok")
+    err_msg = getattr(result, "error_message", None) if not isinstance(result, dict) else result.get("error_message")
+    explanation = getattr(result, "explanation", None) if not isinstance(result, dict) else result.get("explanation")
+    refusal_reason = getattr(result, "refusal_reason", None) if not isinstance(result, dict) else result.get("refusal_reason")
+    is_demo = getattr(result, "is_demo", False) if not isinstance(result, dict) else result.get("is_demo", False)
 
     # 1. Demo Mode Notice
     if is_demo:
         st.info("💡 **Demo Mode Replay**: Serving pre-verified benchmark response from the demonstration cache.")
 
     # 2. Human-Readable Status Banner
-    status_info = format_status_message(status, err_msg, explanation, refusal_reason)
+    status_info = format_status_message(status or "ok", err_msg, explanation, refusal_reason)
     if status_info["level"] == "warning":
         st.warning(f"🛡️ **{status_info['title']}**: {status_info['message']}")
     elif status_info["level"] == "error":
@@ -243,20 +239,27 @@ def render_result_view(result: dict[str, Any]) -> None:
     elif status_info["level"] == "info":
         st.info(f"ℹ️ **{status_info['title']}**: {status_info['message']}")
 
+    df = getattr(result, "df", None) if not isinstance(result, dict) else result.get("df")
+    sql = getattr(result, "sql", None) if not isinstance(result, dict) else result.get("sql")
+    latency_ms = getattr(result, "latency_ms", 0.0) if not isinstance(result, dict) else result.get("latency_ms", 0.0)
+    attempts = getattr(result, "attempts", 1) if not isinstance(result, dict) else result.get("attempts", 1)
+    chart_type = getattr(result, "chart_type", None) if not isinstance(result, dict) else result.get("chart_type")
+    chart_figure = getattr(result, "chart_figure", None) if not isinstance(result, dict) else result.get("chart_figure")
+    question = getattr(result, "question", "") if not isinstance(result, dict) else result.get("question", "")
+
     # 3. Execution Metrics (Only for valid results)
-    if status == "ok" and result.get("df") is not None:
-        df: pd.DataFrame = result["df"]
+    if status == "ok" and df is not None:
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
-            st.metric("Latency", f"{result.get('latency_ms', 0):.0f} ms")
+            st.metric("Latency", f"{latency_ms:.0f} ms")
         with col_m2:
-            st.metric("Attempts", f"{result.get('attempts', 1)} / 3")
+            st.metric("Attempts", f"{attempts} / 3")
         with col_m3:
             st.metric("Rows Returned", f"{len(df):,}")
 
         # 4. Generated SQL Code Block
         st.markdown("### 📝 Generated SQL Query")
-        st.code(result.get("sql", "-- No query generated"), language="sql")
+        st.code(sql or "-- No query generated", language="sql")
 
         # 5. Visualizations & Data Tabs
         st.markdown("### 📊 Query Results & Visualizations")
@@ -266,12 +269,12 @@ def render_result_view(result: dict[str, Any]) -> None:
             st.dataframe(df, use_container_width=True)
 
         with tab_chart:
-            chart_type = result.get("chart_type") or auto_pick_chart_type(df)
-            if chart_type == "table-only" or len(df) == 0:
+            c_type = chart_type or auto_pick_chart_type(df)
+            if c_type == "table-only" or len(df) == 0:
                 st.caption("ℹ️ Tabular presentation is best for this single-value or empty result set.")
                 st.dataframe(df, use_container_width=True)
             else:
-                fig = generate_plotly_figure(df, chart_type=chart_type, title=result["question"])
+                fig = chart_figure or generate_plotly_figure(df, chart_type=c_type, title=question)
                 if fig is not None:
                     st.plotly_chart(fig, use_container_width=True)
                 else:
@@ -317,7 +320,6 @@ def main() -> None:
             if st.button(f"{ex['icon']} {ex['title']}", key=f"ex_{ex['id']}", use_container_width=True):
                 st.session_state["current_question"] = ex["question"]
                 run_query(ex["question"], agent)
-                st.rerun()
 
     st.divider()
 
@@ -333,7 +335,6 @@ def main() -> None:
     if submit_btn and user_question.strip():
         st.session_state["current_question"] = user_question.strip()
         run_query(user_question.strip(), agent)
-        st.rerun()
 
     # Display Active Result
     if st.session_state["active_result"]:
