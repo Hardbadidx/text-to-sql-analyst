@@ -202,7 +202,7 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
             r"\b(delete\s+from|drop\s+table|truncate\s+table|alter\s+table|insert\s+into)\b",
             r"\bupdate\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?)\s+set\b",
             r"\b(delete|truncate)\b.*?\b(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
-            r"\b(wipe|erase|clear|purge|remove)\s+(all|the|every|entire|from)\s+(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
+            r"\b(wipe|erase|clear|purge|remove)\s+(?:all\s+|the\s+|every\s+|entire\s+|from\s+)+(?:\b\w+\b\s+){0,3}(patients?|doctors?|appointments?|treatments?|invoices?|payments?|records?|rows?|data|table|database)\b",
             r"\b(drop|truncate|wipe|erase|clear|purge)\s+(table|database|schema|records|rows|data)\b",
             r"\b(add|insert|create)\s+(a\s+)?(new\s+)?(patient|doctor|appointment|treatment|invoice|payment)\s+(record|row|into|to)\b",
             r"\b(modify|change|update)\s+(the\s+)?(status|amount|duration|cost|reason)\s+of\s+(patient|doctor|appointment|treatment|invoice|payment)\b",
@@ -262,8 +262,6 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
         pre_refusal = self._check_deterministic_refusal(question)
         if pre_refusal is not None:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-            q_chars = len(question)
-            q_tokens = max(1, q_chars // 4)
             attempts_history.append(
                 AttemptDetail(
                     attempt=1,
@@ -280,8 +278,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 status="refused",
                 latency_ms=elapsed_ms,
                 row_count=0,
-                prompt_chars=q_chars,
-                prompt_tokens_est=q_tokens,
+                prompt_chars=0,
+                prompt_tokens_est=0,
                 error_message=pre_refusal,
             )
             return AgentResult(
@@ -295,8 +293,8 @@ SECURITY & SAFETY RULES (NON-NEGOTIABLE):
                 attempts=1,
                 status="refused",
                 latency_ms=round(elapsed_ms, 2),
-                prompt_chars=q_chars,
-                prompt_tokens_est=q_tokens,
+                prompt_chars=0,
+                prompt_tokens_est=0,
                 error_message=pre_refusal,
                 attempts_history=attempts_history,
             )

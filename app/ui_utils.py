@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+GLOBAL_CAP_MESSAGE: str = "Daily live-query limit reached, showing demo mode"
 
 # 6 Curated Benchmark Example Questions (Questions & UI metadata only; no data)
 EXAMPLE_QUESTIONS: list[dict[str, str]] = [
@@ -107,6 +111,22 @@ def format_status_message(
     clean_expl = sanitize_text(explanation)
     clean_ref = sanitize_text(refusal_reason)
 
+    # Handle global daily query cap limit reached
+    if (
+        "daily live-query limit reached" in clean_err.lower()
+        or "daily live-query limit reached" in clean_expl.lower()
+        or "daily live-query limit reached" in clean_ref.lower()
+    ):
+        return {
+            "title": "Daily Limit Reached",
+            "message": GLOBAL_CAP_MESSAGE,
+            "level": "warning",
+            "explanation": (
+                "The process-level daily live-query limit has been reached across all visitors. "
+                "Switching to demo mode to explore pre-verified benchmark responses."
+            ),
+        }
+
     # Handle demo cache unavailability
     if "demo data unavailable" in clean_err.lower():
         return {
@@ -177,6 +197,54 @@ def format_status_message(
     }
 
 
+class GlobalDailyCapTracker:
+    """Thread-safe, process-level global daily query counter keyed by UTC date."""
+
+    def __init__(self, cap: int = 150) -> None:
+        self.cap = cap
+        self.counts: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def get_current_utc_date(self) -> str:
+        """Return current UTC date formatted as YYYY-MM-DD."""
+        return datetime.now(UTC).strftime("%Y-%m-%d")
+
+    def get_count(self, utc_date: str | None = None) -> int:
+        """Return the current query count for the given UTC date (defaults to today)."""
+        date_key = utc_date or self.get_current_utc_date()
+        with self._lock:
+            return self.counts.get(date_key, 0)
+
+    def is_cap_reached(self, utc_date: str | None = None) -> bool:
+        """Check whether the daily cap is reached for the given UTC date."""
+        return self.get_count(utc_date) >= self.cap
+
+    def increment(self, utc_date: str | None = None) -> tuple[int, bool]:
+        """Increment count for the given UTC date if cap is not yet reached.
+
+        Returns (new_count, is_capped).
+        """
+        date_key = utc_date or self.get_current_utc_date()
+        with self._lock:
+            current = self.counts.get(date_key, 0)
+            if current >= self.cap:
+                return current, True
+            new_val = current + 1
+            self.counts[date_key] = new_val
+            return new_val, new_val >= self.cap
+
+    def reset_for_date(self, utc_date: str | None = None) -> None:
+        """Reset counter for test isolation."""
+        date_key = utc_date or self.get_current_utc_date()
+        with self._lock:
+            self.counts.pop(date_key, None)
+
+
+def check_global_cap_reached(count: int, cap: int = 150) -> bool:
+    """Pure-function check whether the global daily live query count has reached cap."""
+    return count >= cap
+
+
 def check_quota_limit(live_count: int, max_limit: int = 10) -> bool:
     """Check whether the current session has reached the live query limit."""
     return live_count >= max_limit
@@ -187,25 +255,60 @@ def get_remaining_quota(live_count: int, max_limit: int = 10) -> int:
     return max(0, max_limit - live_count)
 
 
-def should_consume_quota(status: str) -> bool:
-    """Determine whether an execution status should consume visitor live query quota.
+def should_consume_quota(
+    result_or_status: Any,
+    prompt_chars: int | None = None,
+    attempts: int | None = None,
+) -> bool:
+    """Determine whether a query execution should consume visitor live query quota.
 
-    Only queries that actually reached the model and returned an answer (status 'ok' or
-    query execution/validation 'error') consume visitor quota.
-    Failed provider calls ('provider_unavailable') and pre-check/policy refusals ('refused')
-    must NEVER consume quota.
+    A query counts against the visitor's live quota if a model request was actually sent
+    (including model-driven refusals, status 'ok', or query execution/validation 'error').
+    It does NOT count for:
+    - Deterministic pre-check refusals (no model call made, prompt_chars == 0)
+    - Provider failures (status 'provider_unavailable')
     """
-    return status not in ("refused", "provider_unavailable")
+    if isinstance(result_or_status, str):
+        status = result_or_status
+        if status == "provider_unavailable":
+            return False
+        if prompt_chars is not None:
+            return prompt_chars > 0
+        return status not in ("refused", "provider_unavailable")
+
+    status = (
+        getattr(result_or_status, "status", None)
+        if not isinstance(result_or_status, dict)
+        else result_or_status.get("status")
+    )
+    if status == "provider_unavailable":
+        return False
+
+    chars = (
+        prompt_chars
+        if prompt_chars is not None
+        else (
+            getattr(result_or_status, "prompt_chars", 0)
+            if not isinstance(result_or_status, dict)
+            else result_or_status.get("prompt_chars", 0)
+        )
+    )
+    return (chars or 0) > 0
 
 
-def record_live_query(current_count: int, status: str, already_counted: bool = False) -> tuple[int, bool]:
+def record_live_query(
+    current_count: int,
+    result_or_status: Any,
+    already_counted: bool = False,
+    prompt_chars: int | None = None,
+) -> tuple[int, bool]:
     """Pure function calculating the new live query count without double counting.
 
     Returns (new_count, was_counted).
     """
     if already_counted:
         return current_count, False
-    if not should_consume_quota(status):
+    if not should_consume_quota(result_or_status, prompt_chars=prompt_chars):
         return current_count, False
     return current_count + 1, True
 
@@ -232,6 +335,7 @@ def agent_result_to_record(agent_res: Any, elapsed_ms: float = 0.0) -> dict[str,
         "debug_error": getattr(agent_res, "debug_error", None),
         "chart_type": getattr(agent_res, "chart_type", "table-only"),
         "chart_figure": getattr(agent_res, "chart_figure", None),
+        "prompt_chars": getattr(agent_res, "prompt_chars", 0),
     }
 
 

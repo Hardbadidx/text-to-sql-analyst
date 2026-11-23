@@ -162,7 +162,7 @@ sqlglot==30.33.0
     # via text2sql-analyst (pyproject.toml)
 starlette==1.10.0
     # via streamlit
-streamlit==1.67.0
+streamlit>=1.48.0
     # via text2sql-analyst (pyproject.toml)
 tabulate==0.10.0
     # via text2sql-analyst (pyproject.toml)

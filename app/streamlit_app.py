@@ -28,6 +28,8 @@ import streamlit as st
 
 from app.ui_utils import (
     EXAMPLE_QUESTIONS,
+    GLOBAL_CAP_MESSAGE,
+    GlobalDailyCapTracker,
     agent_result_to_record,
     check_quota_limit,
     format_status_message,
@@ -54,6 +56,13 @@ st.set_page_config(
 def get_agent() -> Text2SQLAgent:
     """Initialize and cache the Text2SQLAgent instance."""
     return Text2SQLAgent()
+
+
+@st.cache_resource
+def get_global_cap_tracker() -> GlobalDailyCapTracker:
+    """Initialize process-level daily cap tracker shared across all visitors."""
+    from text2sql.config import settings
+    return GlobalDailyCapTracker(cap=settings.global_daily_query_cap)
 
 
 def init_session_state() -> None:
@@ -162,12 +171,15 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
     if not cleaned_q:
         return
 
-    # Check if demo mode or session limit reached
+    # Check if demo mode, session limit, or global daily cap reached
+    global_tracker = get_global_cap_tracker()
+    is_global_capped = global_tracker.is_cap_reached()
     is_quota_exhausted = check_quota_limit(st.session_state["live_query_count"], MAX_LIVE_QUERIES)
     use_demo = (
         st.session_state["demo_mode"]
         or st.session_state.get("provider_quota_exhausted", False)
         or is_quota_exhausted
+        or is_global_capped
     )
 
     if use_demo:
@@ -187,12 +199,30 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "debug_error": None,
                 "chart_type": demo_resp.get("chart_type", "table-only"),
                 "chart_figure": None,
+                "prompt_chars": 0,
             }
             st.session_state["active_result"] = record
             st.session_state["history"].append(record)
             return
 
-        if is_quota_exhausted:
+        if is_global_capped:
+            record = {
+                "question": cleaned_q,
+                "status": "refused",
+                "sql": None,
+                "df": None,
+                "row_count": 0,
+                "explanation": GLOBAL_CAP_MESSAGE,
+                "attempts": 0,
+                "latency_ms": 0.0,
+                "is_demo": True,
+                "error_message": GLOBAL_CAP_MESSAGE,
+                "debug_error": None,
+                "chart_type": "table-only",
+                "chart_figure": None,
+                "prompt_chars": 0,
+            }
+        elif is_quota_exhausted:
             # Question is not an example and live limit is reached
             record = {
                 "question": cleaned_q,
@@ -211,6 +241,7 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "debug_error": None,
                 "chart_type": "table-only",
                 "chart_figure": None,
+                "prompt_chars": 0,
             }
         else:
             # Demo mode active but query is not in demo_cache.json
@@ -231,6 +262,7 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
                 "debug_error": None,
                 "chart_type": "table-only",
                 "chart_figure": None,
+                "prompt_chars": 0,
             }
         st.session_state["active_result"] = record
         st.session_state["history"].append(record)
@@ -250,9 +282,11 @@ def run_query(question: str, agent: Text2SQLAgent) -> None:
             if any(w in err_lower for w in ["quota", "perday", "429", "resource_exhausted"]):
                 st.session_state["provider_quota_exhausted"] = True
 
-        # Failed provider calls and refusals must NOT consume live quota
-        new_count, _ = record_live_query(st.session_state["live_query_count"], status)
+        # Failed provider calls and pre-check refusals must NOT consume live quota
+        new_count, counted = record_live_query(st.session_state["live_query_count"], agent_res)
         st.session_state["live_query_count"] = new_count
+        if counted:
+            global_tracker.increment()
 
         record = agent_result_to_record(agent_res, elapsed_ms)
         st.session_state["active_result"] = record
@@ -347,7 +381,10 @@ def main() -> None:
         "Every generated query is strictly verified by an **AST security validator** and executed on a **read-only database**."
     )
 
-    if st.session_state["demo_mode"]:
+    global_tracker = get_global_cap_tracker()
+    if global_tracker.is_cap_reached():
+        st.warning(f"⚠️ **{GLOBAL_CAP_MESSAGE}**")
+    elif st.session_state["demo_mode"]:
         st.warning(
             "⚠️ **Demo Mode Active**: Live LLM calls are disabled. "
             "You can click and explore any of the 6 benchmark questions below to view pre-verified SQL, tables, and charts."

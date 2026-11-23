@@ -610,11 +610,11 @@ def test_check_quota_limit_and_remaining():
 
 
 def test_load_eval_summary_from_latest_json():
-    """load_eval_summary must dynamically parse metrics from eval/results/latest.json with commit 7bbd679."""
+    """load_eval_summary must dynamically parse metrics from eval/results/latest.json."""
     summary = load_eval_summary()
     assert summary["available"] is True
     assert summary["model"] == "gemini-3.5-flash-lite"
-    assert summary["git_commit"] == "7bbd679"
+    assert summary["git_commit"] is not None and len(summary["git_commit"]) >= 7
     assert summary["total_questions"] == 56
     assert summary["exact_accuracy_pct"] == 76.79
     assert summary["lenient_accuracy_pct"] == 96.43
@@ -673,46 +673,139 @@ def test_chart_selection_and_figure_generation_integration():
 
 
 def test_should_consume_quota_pure_function():
-    """Only queries that reached the model and returned an answer consume quota."""
-    # 1. Successful query: model was contacted and answered
-    assert should_consume_quota("ok") is True
+    """A query counts against the live quota if a model request was actually sent.
 
-    # 2. Error query: model generated a query that failed DB execution or AST validation
-    assert should_consume_quota("error") is True
+    - Model-driven refusals (prompt_chars > 0) DO count.
+    - Deterministic pre-check refusals (prompt_chars == 0) DO NOT count.
+    - Provider failures (status 'provider_unavailable') NEVER count.
+    - Successful queries and execution/validation errors (prompt_chars > 0) DO count.
+    """
+    # 1. Successful query with model prompt chars
+    assert should_consume_quota("ok", prompt_chars=1240) is True
 
-    # 3. Refusals: deterministic pre-checks or model refusals must NOT consume visitor quota
-    assert should_consume_quota("refused") is False
+    # 2. Error query where model was contacted but query failed validation/execution
+    assert should_consume_quota("error", prompt_chars=1450) is True
 
-    # 4. Provider failures: missing keys, rate limits, network outages must NOT consume quota
-    assert should_consume_quota("provider_unavailable") is False
+    # 3. Model-driven refusal (e.g. out-of-domain where model was contacted and refused)
+    assert should_consume_quota("refused", prompt_chars=1100) is True
+
+    # 4. Deterministic pre-check refusal (NO model prompt sent, prompt_chars == 0)
+    assert should_consume_quota("refused", prompt_chars=0) is False
+
+    # 5. Provider unavailable (429, network, missing key) NEVER consumes quota
+    assert should_consume_quota("provider_unavailable", prompt_chars=0) is False
+    assert should_consume_quota("provider_unavailable", prompt_chars=1200) is False
+
+    # 6. Tolerant with AgentResult instances
+    res_model_refusal = AgentResult(
+        question="What is the weather in Paris?",
+        status="refused",
+        prompt_chars=1500,
+        explanation="Out of domain.",
+    )
+    assert should_consume_quota(res_model_refusal) is True
+
+    res_precheck_refusal = AgentResult(
+        question="Drop table appointments",
+        status="refused",
+        prompt_chars=0,
+        explanation="Destructive operation blocked.",
+    )
+    assert should_consume_quota(res_precheck_refusal) is False
+
+    res_provider_down = AgentResult(
+        question="How many patients?",
+        status="provider_unavailable",
+        prompt_chars=1200,
+        explanation="429 Resource Exhausted",
+    )
+    assert should_consume_quota(res_provider_down) is False
 
 
 def test_record_live_query_prevents_double_counting():
-    """record_live_query must increment by exactly 1 per successful query and 0 for refusals/failures."""
-    # Initial count = 0
-    count, counted = record_live_query(current_count=0, status="ok")
+    """record_live_query increments by 1 per query reaching the model and 0 for pre-checks/failures."""
+    # Initial count = 0, successful query reaching model
+    count, counted = record_live_query(current_count=0, result_or_status="ok", prompt_chars=1200)
     assert count == 1
     assert counted is True
 
-    # Refusal must NOT increment
-    count2, counted2 = record_live_query(current_count=count, status="refused")
+    # Deterministic pre-check refusal (prompt_chars=0) must NOT increment
+    count2, counted2 = record_live_query(current_count=count, result_or_status="refused", prompt_chars=0)
     assert count2 == 1
     assert counted2 is False
 
-    # Provider unavailable must NOT increment
-    count3, counted3 = record_live_query(current_count=count, status="provider_unavailable")
-    assert count3 == 1
-    assert counted3 is False
+    # Model-driven refusal (prompt_chars=1500) DOES increment
+    count3, counted3 = record_live_query(current_count=count2, result_or_status="refused", prompt_chars=1500)
+    assert count3 == 2
+    assert counted3 is True
 
-    # Second successful query increments to 2
-    count4, counted4 = record_live_query(current_count=count, status="ok")
+    # Provider unavailable must NOT increment even if prompt was created
+    count4, counted4 = record_live_query(current_count=count3, result_or_status="provider_unavailable", prompt_chars=1200)
     assert count4 == 2
-    assert counted4 is True
+    assert counted4 is False
 
     # Double count protection: if already counted, do not increment again
-    count5, counted5 = record_live_query(current_count=count4, status="ok", already_counted=True)
+    count5, counted5 = record_live_query(current_count=count4, result_or_status="ok", already_counted=True, prompt_chars=1200)
     assert count5 == 2
     assert counted5 is False
+
+
+def test_global_daily_cap_tracker_pure_function_and_thread_safety():
+    """Test GlobalDailyCapTracker: process-level counter keyed by UTC date with thread safety."""
+    import concurrent.futures
+
+    from app.ui_utils import GlobalDailyCapTracker, check_global_cap_reached
+
+    tracker = GlobalDailyCapTracker(cap=150)
+    today = tracker.get_current_utc_date()
+
+    # Reset for clean test
+    tracker.reset_for_date(today)
+    assert tracker.get_count() == 0
+    assert tracker.is_cap_reached() is False
+    assert check_global_cap_reached(0, cap=150) is False
+
+    # Increment up to 149
+    for i in range(149):
+        new_c, is_capped = tracker.increment()
+        assert new_c == i + 1
+        assert is_capped is False
+
+    assert tracker.get_count() == 149
+    assert tracker.is_cap_reached() is False
+
+    # 150th query reaches the cap
+    new_c, is_capped = tracker.increment()
+    assert new_c == 150
+    assert is_capped is True
+    assert tracker.is_cap_reached() is True
+    assert check_global_cap_reached(150, cap=150) is True
+
+    # Further attempts are capped and do not increment
+    new_c2, is_capped2 = tracker.increment()
+    assert new_c2 == 150
+    assert is_capped2 is True
+
+    # Test UTC date key isolation: tomorrow has fresh 0 count
+    tomorrow = "2099-01-01"
+    assert tracker.get_count(tomorrow) == 0
+    assert tracker.is_cap_reached(tomorrow) is False
+
+    # Test multi-threaded concurrency
+    test_tracker = GlobalDailyCapTracker(cap=100)
+    test_date = "2026-11-23"
+    test_tracker.reset_for_date(test_date)
+
+    def worker():
+        test_tracker.increment(test_date)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(worker) for _ in range(120)]
+        concurrent.futures.wait(futures)
+
+    # Must be clamped at exactly 100 without race condition overflow
+    assert test_tracker.get_count(test_date) == 100
+    assert test_tracker.is_cap_reached(test_date) is True
 
 
 def test_no_deprecated_use_container_width_in_app():

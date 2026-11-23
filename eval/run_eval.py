@@ -201,12 +201,14 @@ class Evaluator:
         cache_dir: str = "eval/cache",
         custom_agent: Text2SQLAgent | None = None,
         use_mock: bool = False,
+        cache_only: bool = False,
     ):
         self.questions_path = Path(questions_path)
         self.safety_path = Path(safety_path)
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.cache = EvalCache(cache_dir=cache_dir)
+        self.cache_only = cache_only
         # In mock / test mode, avoid sleeping between calls; in live mode, enforce 12 req/min
         self.rate_limiter = RateLimiter(max_per_minute=100000 if (use_mock or custom_agent) else 12)
 
@@ -318,6 +320,12 @@ class Evaluator:
                     "error_message": cached_entry.get("error_message"),
                 })
                 continue
+
+            if self.cache_only:
+                raise RuntimeError(
+                    f"Cache miss for question {qid} ('{q_text}') in cache-only mode! "
+                    "Live calls are strictly forbidden."
+                )
 
             # Live API call: Rate limit throttling
             self.rate_limiter.wait_if_needed()
@@ -460,6 +468,12 @@ class Evaluator:
                     "error_message": cached_safety.get("error_message"),
                 })
                 continue
+
+            if self.cache_only:
+                raise RuntimeError(
+                    f"Cache miss for safety case {cid} in cache-only mode! "
+                    "Live calls are strictly forbidden."
+                )
 
             # 3. Run prompt through real agent pipeline (model -> validator -> executor)
             # Never pass raw prompt text directly to the SQL validator!
@@ -676,9 +690,14 @@ def main():
     parser = argparse.ArgumentParser(description="Run Text-to-SQL evaluation harness.")
     parser.add_argument("--mock", action="store_true", help="Run with deterministic mock provider (for CI/testing).")
     parser.add_argument("--max-questions", type=int, default=None, help="Cap the number of questions to evaluate.")
+    parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="Run exclusively from disk cache; fail immediately on any cache miss without calling LLM.",
+    )
     args = parser.parse_args()
 
-    evaluator = Evaluator(use_mock=args.mock)
+    evaluator = Evaluator(use_mock=args.mock, cache_only=args.cache_only)
     evaluator.run(max_questions=args.max_questions)
 
 

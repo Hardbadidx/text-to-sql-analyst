@@ -522,4 +522,58 @@ def test_pre_check_refusal_with_raising_provider_factory():
     assert "No language model is configured" in benign_res.explanation
 
 
+def test_deterministic_precheck_destructive_with_adjectives_refused():
+    """Destructive commands with adjectives between the verb and the target table must be refused."""
+    destructive_with_adjectives = [
+        "Delete all cancelled appointments from the database",
+        "Delete the old patient records",
+        "Truncate the secondary appointments table",
+        "Wipe all inactive patients",
+        "Remove all inactive patients",
+        "Purge the entire clinic database",
+        "Erase all previous appointment rows",
+        "Clear the old invoices table",
+        "Remove the inactive doctor records",
+        "Purge all old invoices",
+        "Wipe the patient table",
+    ]
+    for prompt in destructive_with_adjectives:
+        refusal = Text2SQLAgent._check_deterministic_refusal(prompt)
+        assert refusal is not None, f"Expected '{prompt}' to be refused, but it was allowed."
+        assert "refused" in refusal.lower() or "not permitted" in refusal.lower()
+
+
+def test_deterministic_precheck_benign_analytical_questions_allowed():
+    """Benign analytical questions with words like 'deleted', 'drop-off', 'remove' must NOT be refused."""
+    benign_queries = [
+        "How many appointments have been marked as deleted?",
+        "What was the monthly drop-off in completed appointment count across 2024?",
+        "If we remove doctors hired after 2023, what is the total appointment volume?",
+        "Calculate the revenue drop-off between Q1 and Q2.",
+        "Show all records that were marked deleted by staff.",
+        "What is the average cost after we remove outlier treatments?",
+        "Can you remove the fee calculation and just sum the invoice amount?",
+        "Count of cancelled or deleted appointments in cardiology",
+    ]
+    for prompt in benign_queries:
+        refusal = Text2SQLAgent._check_deterministic_refusal(prompt)
+        assert refusal is None, f"Expected benign query '{prompt}' to be allowed, but it was falsely refused: {refusal}"
+
+
+def test_deterministic_precheck_all_benchmark_questions_allowed():
+    """Verify that none of the benchmark questions in eval/questions.yaml are falsely pre-refused."""
+    import yaml
+
+    questions_path = Path(__file__).resolve().parent.parent / "eval" / "questions.yaml"
+    assert questions_path.exists(), f"Missing {questions_path}"
+
+    with open(questions_path, encoding="utf-8") as f:
+        questions = yaml.safe_load(f)
+
+    for q in questions:
+        refusal = Text2SQLAgent._check_deterministic_refusal(q["question"])
+        assert refusal is None, f"Benchmark question {q['id']} ('{q['question']}') was falsely refused: {refusal}"
+
+
+
 

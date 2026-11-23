@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         default=5.0,
         description="Maximum execution timeout in seconds before query cancellation.",
     )
+    global_daily_query_cap: int = Field(
+        default=150,
+        description="Global daily live query cap across all visitors, keyed by UTC date.",
+    )
 
     # LLM Settings
     llm_provider: str = Field(
