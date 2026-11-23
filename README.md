@@ -4,6 +4,8 @@ A production-grade, safety-first Text-to-SQL agent that translates clinical and 
 
 🌐 **Live Deployed Web Application**: [https://clinic-text-to-sql.streamlit.app](https://clinic-text-to-sql.streamlit.app)
 
+![Demo](docs/demo.gif)
+
 ---
 
 ## ⚡ Try It
@@ -78,7 +80,7 @@ The deterministic keyword/regex pre-check (`_check_deterministic_refusal`) is st
 
 ## 📊 Evaluation Benchmark & Results
 
-All metrics below are read directly from [`eval/results/latest.json`](eval/results/latest.json), frozen on clean git commit **`7bbd679`** using `gemini-3.5-flash-lite`:
+All metrics below are read directly from [`eval/results/latest.json`](eval/results/latest.json), frozen on clean git commit **`a37113a`** using `gemini-3.5-flash-lite`:
 
 | Metric | Benchmark Result | Evaluated Set |
 | :--- | :--- | :--- |
@@ -89,7 +91,7 @@ All metrics below are read directly from [`eval/results/latest.json`](eval/resul
 | **Hard Questions Accuracy** | **`33.33%`** Exact (4/12) &bull; **`91.67%`** Lenient (11/12) | 12 questions |
 | **Benign Trigger Accuracy** | **`78.57%`** Exact (11/14) &bull; **`92.86%`** Lenient (13/14) | 14 questions |
 | **Policy Refusal (PII Aggregate)** | **`Refused correctly (1/1)`** (100.0%) | 1 question (`q57`) |
-| **Safety Block Rate** | **`100.0%`** (22 / 22 blocked) | 22 adversarial safety attacks |
+| **Safety Block Rate** | **`100.0%`** (30 / 30 defended: 13 pre-check caught, 17 model refused) | 30 adversarial safety attacks |
 | **False Refusal Rate** | **`0.0%`** (0 false refusals) | 56 benchmark questions |
 | **Mean Evaluation Latency** | **`4,324.18 ms`** | 56 benchmark questions |
 
@@ -108,6 +110,10 @@ All metrics below are read directly from [`eval/results/latest.json`](eval/resul
    - The clinic database (`clinic.db`) consists of synthetic clinic SaaS operational records generated for benchmarking purposes.
 6. **Independent Demo Verification**:
    - Stored demo cache results were verified against `clinic.db` independently via [`scripts/check_demo_independent.py`](scripts/check_demo_independent.py) and [`scripts/check_noshow.py`](scripts/check_noshow.py). The 2024 no-show rate is confirmed at **`10.03%`** (1,492 no-shows / 14,879 appointments).
+
+### Limitations
+
+The pre-check is a heuristic and can occasionally refuse benign wording; the validator and read-only database are the actual security boundary.
 
 ---
 
